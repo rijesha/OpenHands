@@ -138,6 +138,47 @@ export const APP_UPDATE_QUERY_KEYS = {
   latestVersion: ["agent-canvas-latest-version"] as const,
 } as const;
 
+/**
+ * GitHub issues / pull requests fetched for the GitHub page. Scoped by
+ * backend + org because the token used for the request comes from the active
+ * backend's secrets.
+ */
+export const GITHUB_WORK_ITEMS_QUERY_KEYS = {
+  all: ["github-work-items"] as const,
+  list: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    kind: string,
+    state: string,
+  ) =>
+    [
+      "github-work-items",
+      "list",
+      backendId,
+      orgId,
+      repository,
+      kind,
+      state,
+    ] as const,
+  detail: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    kind: string,
+    number: number,
+  ) =>
+    [
+      "github-work-items",
+      "detail",
+      backendId,
+      orgId,
+      repository,
+      kind,
+      number,
+    ] as const,
+} as const;
+
 export const DEFAULT_CONVERSATION_PAGE_SIZE = 20;
 
 export const CONVERSATION_QUERY_KEYS = {

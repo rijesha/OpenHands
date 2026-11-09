@@ -31,6 +31,7 @@ import { AgentCanvasVersionTile } from "#/components/features/settings/agent-can
 import { SidebarConversationList } from "./sidebar-conversation-list";
 import { SidebarOnboardingChecklist } from "./sidebar-onboarding-checklist";
 import AutomationsIcon from "#/icons/automations.svg?react";
+import { FaGithub } from "react-icons/fa6";
 import {
   SIDEBAR_COLLAPSE_TOGGLE_OVERLAY_CLASS,
   SIDEBAR_COLLAPSED_LOGO_WRAPPER_CLASS,
@@ -46,6 +47,7 @@ import { CanvasExtensionIcon } from "#/components/features/canvas-extensions/can
 import type { Backend } from "#/api/backend-registry/types";
 
 const ICON_SIZE = 18;
+const GITHUB_PATH = "/github";
 const SIDEBAR_LOGO_WIDTH = 34;
 const SIDEBAR_LOGO_HEIGHT = Math.round((SIDEBAR_LOGO_WIDTH * 30) / 46);
 
@@ -265,6 +267,13 @@ export function SidebarRailBody({
             )}
           />
         )}
+        <SidebarNavLink
+          to={GITHUB_PATH}
+          label={t(I18nKey.GITHUB$PAGE_TITLE)}
+          testId="sidebar-github-link"
+          collapsed={collapsed}
+          icon={<FaGithub size={ICON_SIZE} aria-hidden />}
+        />
         {canvasExtensionPages.map((page) => (
           <SidebarNavLink
             key={`${page.extension.name}:${page.contribution.id}`}

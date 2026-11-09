@@ -23,6 +23,66 @@ const PROVIDER_TOKEN_SECRET_CANDIDATES: Partial<Record<Provider, string[]>> = {
 
 const LIST_LIMIT = 30;
 
+/** Which GitHub collection a work item belongs to. */
+export type GithubWorkItemKind = "issue" | "pull_request";
+
+/** The `state` filter GitHub's list endpoints accept. */
+export type GithubWorkItemStateFilter = "open" | "closed" | "all";
+
+/** Summary row for an issue or pull request in a browsable list. */
+export interface GithubWorkItem {
+  kind: GithubWorkItemKind;
+  id: number;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed";
+  /** Pull requests only: closed by merging. Always false for issues. */
+  merged: boolean;
+  /** Pull requests only. Always false for issues. */
+  draft: boolean;
+  authorLogin: string | null;
+  updatedAt: string | null;
+  /** GitHub's PR list endpoint omits the count, so it can be unknown. */
+  commentsCount: number | null;
+  labels: string[];
+  assignees: string[];
+}
+
+/** A single issue or pull request with its description and branch data. */
+export interface GithubWorkItemDetail extends GithubWorkItem {
+  body: string | null;
+  /** Pull requests only: the branch the changes live on. */
+  headRef: string | null;
+  /** Pull requests only: `owner/repo` the head branch lives in (a fork differs). */
+  headRepository: string | null;
+  /** Pull requests only: the branch the changes merge into. */
+  baseRef: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
+}
+
+export interface GithubWorkItemPage {
+  items: GithubWorkItem[];
+  /** The next 1-based page to request, or null when this was the last. */
+  nextPage: number | null;
+}
+
+/**
+ * A non-OK response from a git provider's REST API. `status` lets callers
+ * explain the common cases (401/403 auth or rate limit, 404 private repo).
+ */
+export class GitProviderApiError extends Error {
+  readonly status: number;
+
+  constructor(provider: string, status: number) {
+    super(`${provider} API ${status}`);
+    this.name = "GitProviderApiError";
+    this.status = status;
+  }
+}
+
 async function resolveProviderToken(
   provider: Provider,
 ): Promise<string | null> {
@@ -122,7 +182,7 @@ async function fetchGithubJson<T>(
 
   const response = await fetch(`https://api.github.com${path}`, { headers });
   if (!response.ok) {
-    throw new Error(`GitHub API ${response.status}`);
+    throw new GitProviderApiError("GitHub", response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -187,6 +247,71 @@ type GithubIssueOrPr = {
   updated_at?: string | null;
   pull_request?: unknown;
 };
+
+type GithubNamedLogin = { login?: string | null } | null;
+
+type GithubWorkItemResponse = {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  state?: string | null;
+  draft?: boolean | null;
+  merged?: boolean | null;
+  merged_at?: string | null;
+  user?: GithubNamedLogin;
+  updated_at?: string | null;
+  comments?: number | null;
+  labels?: Array<string | { name?: string | null }> | null;
+  assignees?: GithubNamedLogin[] | null;
+  body?: string | null;
+  pull_request?: unknown;
+  head?: {
+    ref?: string | null;
+    repo?: { full_name?: string | null } | null;
+  } | null;
+  base?: { ref?: string | null } | null;
+  additions?: number | null;
+  deletions?: number | null;
+  changed_files?: number | null;
+};
+
+function splitGithubRepository(
+  repository: string,
+): [owner: string, repo: string] | null {
+  const [owner, repo, ...rest] = repository.split("/");
+  if (!owner || !repo || rest.length > 0) {
+    return null;
+  }
+  return [encodeURIComponent(owner), encodeURIComponent(repo)];
+}
+
+function toGithubWorkItem(
+  item: GithubWorkItemResponse,
+  kind: GithubWorkItemKind,
+): GithubWorkItem {
+  return {
+    kind,
+    id: item.id,
+    number: item.number,
+    title: item.title,
+    url: item.html_url,
+    state: item.state === "closed" ? "closed" : "open",
+    // The list endpoint reports merges only through `merged_at`; the detail
+    // endpoint also sets `merged`.
+    merged: kind === "pull_request" && Boolean(item.merged || item.merged_at),
+    draft: kind === "pull_request" && Boolean(item.draft),
+    authorLogin: item.user?.login ?? null,
+    updatedAt: item.updated_at ?? null,
+    commentsCount: typeof item.comments === "number" ? item.comments : null,
+    labels: (item.labels ?? [])
+      .map((label) => (typeof label === "string" ? label : label?.name))
+      .filter((name): name is string => Boolean(name)),
+    assignees: (item.assignees ?? [])
+      .map((assignee) => assignee?.login)
+      .filter((login): login is string => Boolean(login)),
+  };
+}
 
 type GitlabMergeRequest = {
   id: number;
@@ -359,5 +484,73 @@ export class GitProviderItemsService {
         authorLogin: item.user?.login ?? null,
         updatedAt: item.updated_at ?? null,
       }));
+  }
+
+  /**
+   * One page of a GitHub repository's issues or pull requests, most recently
+   * updated first. `nextPage` follows GitHub's raw page size, so a page of
+   * issues whose rows were mostly pull requests still reports more pages.
+   */
+  static async listGithubWorkItems(
+    repository: string,
+    kind: GithubWorkItemKind,
+    options: { state: GithubWorkItemStateFilter; page: number },
+  ): Promise<GithubWorkItemPage> {
+    const parts = splitGithubRepository(repository);
+    if (!parts) {
+      return { items: [], nextPage: null };
+    }
+    const [owner, repo] = parts;
+    const token = await resolveProviderToken("github");
+    const params = new URLSearchParams({
+      state: options.state,
+      sort: "updated",
+      direction: "desc",
+      per_page: String(LIST_LIMIT),
+      page: String(options.page),
+    });
+    const collection = kind === "issue" ? "issues" : "pulls";
+    const rows = await fetchGithubJson<GithubWorkItemResponse[]>(
+      `/repos/${owner}/${repo}/${collection}?${params.toString()}`,
+      token,
+    );
+
+    return {
+      items: rows
+        // The issues endpoint also returns pull requests.
+        .filter((row) => kind === "pull_request" || !row.pull_request)
+        .map((row) => toGithubWorkItem(row, kind)),
+      nextPage: rows.length === LIST_LIMIT ? options.page + 1 : null,
+    };
+  }
+
+  /** A single GitHub issue or pull request with its description. */
+  static async getGithubWorkItem(
+    repository: string,
+    kind: GithubWorkItemKind,
+    number: number,
+  ): Promise<GithubWorkItemDetail> {
+    const parts = splitGithubRepository(repository);
+    if (!parts) {
+      throw new GitProviderApiError("GitHub", 404);
+    }
+    const [owner, repo] = parts;
+    const token = await resolveProviderToken("github");
+    const collection = kind === "issue" ? "issues" : "pulls";
+    const item = await fetchGithubJson<GithubWorkItemResponse>(
+      `/repos/${owner}/${repo}/${collection}/${number}`,
+      token,
+    );
+
+    return {
+      ...toGithubWorkItem(item, kind),
+      body: item.body ?? null,
+      headRef: item.head?.ref ?? null,
+      headRepository: item.head?.repo?.full_name ?? null,
+      baseRef: item.base?.ref ?? null,
+      additions: item.additions ?? null,
+      deletions: item.deletions ?? null,
+      changedFiles: item.changed_files ?? null,
+    };
   }
 }
