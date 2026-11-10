@@ -42,6 +42,12 @@ import { useSettings } from "#/hooks/query/use-settings";
 import { WorkspaceModeSelector } from "#/components/features/chat/workspace-mode-selector";
 import type { PluginSpec } from "#/api/conversation-service/agent-server-conversation-service.types";
 import { markAutomationSetupHandoff } from "#/api/automation-setup-handoff-store";
+import {
+  TestEnvironmentSelect,
+  type TestEnvironment,
+} from "#/components/features/vm-harness/test-environment-select";
+import { useVmHarness } from "#/hooks/query/use-vm-harness";
+import { buildGuiVmPlugin, withGuiVmInstruction } from "#/utils/gui-vm-launch";
 import { PluginPickerModal } from "#/components/features/plugins/plugin-picker-modal";
 import { PluginPickerTrigger } from "#/components/features/plugins/plugin-picker-trigger";
 import { RecommendedAutomationsLauncher } from "#/components/features/automations/recommended-automations-launcher";
@@ -104,6 +110,8 @@ export function HomeChatLauncher() {
   const isRecommendedAutomationsDismissed =
     useHomeRecommendedAutomationsDismissed();
   const [selectedPlugins, setSelectedPlugins] = useState<PluginSpec[]>([]);
+  const [guiVm, setGuiVm] = useState<TestEnvironment>();
+  const { pluginPath: vmHarnessPluginPath } = useVmHarness();
   const [isPluginPickerOpen, setIsPluginPickerOpen] = useState(false);
   const [launcherMode, setLauncherMode] = useState<HomeLauncherMode>("code");
   const displayedLauncherMode = launcherMode;
@@ -171,6 +179,17 @@ export function HomeChatLauncher() {
 
   const handleSubmit = (message: string) => {
     const trimmed = message.trim();
+    // GUI VM testing needs the host workspace, so it is dropped for a Docker
+    // runtime (the selector is hidden there too).
+    const guiVmTarget =
+      isLocal &&
+      !isAutomateMode &&
+      vmHarnessPluginPath &&
+      !isolated &&
+      effectiveWorkspaceMode !== "docker_container"
+        ? guiVm
+        : undefined;
+    const outgoing = withGuiVmInstruction(trimmed, guiVmTarget);
     const hasAttachments = images.length > 0 || files.length > 0;
     if ((!trimmed && !hasAttachments) || isCreating || launchInFlight.current)
       return;
@@ -214,7 +233,7 @@ export function HomeChatLauncher() {
     // via sendMessageWithAttachments / flushPendingTaskAttachments. Passing
     // query here would create a duplicate text-only initial_message.
     let variables: Parameters<typeof createConversation>[0] = {
-      query: hasAttachments ? undefined : trimmed || undefined,
+      query: hasAttachments ? undefined : outgoing || undefined,
       automationSetup: isAutomateMode,
       entryPoint: "home_chat_launcher",
     };
@@ -246,8 +265,12 @@ export function HomeChatLauncher() {
     // Explicitly-attached plugins are additive on top of any ambient set and
     // are resolved from git at run time. Omitted entirely when none selected so
     // nothing attaches unless the user picked it.
-    if (!isAutomateMode && selectedPlugins.length > 0) {
-      variables = { ...variables, plugins: selectedPlugins };
+    const plugins =
+      guiVmTarget && vmHarnessPluginPath
+        ? [...selectedPlugins, buildGuiVmPlugin(vmHarnessPluginPath)]
+        : selectedPlugins;
+    if (!isAutomateMode && plugins.length > 0) {
+      variables = { ...variables, plugins };
     }
 
     // A cloud member's home LLM pick (see useChatInputLlmProfileState), unless
@@ -330,7 +353,7 @@ export function HomeChatLauncher() {
             setPendingTaskAttachments(taskId, {
               backendId: backend.id,
               orgId: orgId ?? null,
-              content: trimmed,
+              content: outgoing,
               images: attachmentSnapshot.images,
               files: attachmentSnapshot.files,
               imagesMarkedUploadAsFile: [...imagesMarkedUploadAsFile],
@@ -338,7 +361,7 @@ export function HomeChatLauncher() {
             if (ownsLaunch()) clearAllFiles();
             await enqueueHomeTaskPendingMessage({
               conversationId: targetConversationId,
-              text: trimmed,
+              text: outgoing,
               images: attachmentSnapshot.images,
               imagesMarkedUploadAsFile,
             });
@@ -357,7 +380,7 @@ export function HomeChatLauncher() {
             try {
               await sendMessageWithAttachments({
                 conversationId: targetConversationId,
-                content: trimmed,
+                content: outgoing,
                 images: attachmentSnapshot.images,
                 files: attachmentSnapshot.files,
                 imagesMarkedUploadAsFile,
@@ -371,10 +394,10 @@ export function HomeChatLauncher() {
           }
         }
 
-        if (isTaskConversation && trimmed) {
+        if (isTaskConversation && outgoing) {
           await enqueueHomeTaskPendingMessage({
             conversationId: targetConversationId,
-            text: trimmed,
+            text: outgoing,
             images: [],
             imagesMarkedUploadAsFile: [],
           });
@@ -570,6 +593,18 @@ export function HomeChatLauncher() {
               options={workspaceModes}
               backendKind={backend.kind}
               onChange={setWorkspaceMode}
+            />
+          ) : null}
+          {isLocal &&
+          vmHarnessPluginPath &&
+          !isolated &&
+          !isAutomateMode &&
+          effectiveWorkspaceMode !== "docker_container" ? (
+            <TestEnvironmentSelect
+              value={guiVm}
+              onChange={setGuiVm}
+              isDisabled={isCreating}
+              compact
             />
           ) : null}
           <PluginPickerTrigger

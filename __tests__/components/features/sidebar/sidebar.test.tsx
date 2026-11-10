@@ -42,6 +42,17 @@ vi.mock("react-i18next", async () => {
   };
 });
 
+const vmHarness = vi.hoisted(() => ({ isAvailable: false }));
+
+// Whether the backend runs the VM harness decides if Test VMs is offered.
+vi.mock("#/hooks/query/use-vm-harness", () => ({
+  useVmHarness: () => ({
+    isAvailable: vmHarness.isAvailable,
+    pluginPath: null,
+    isChecking: false,
+  }),
+}));
+
 vi.mock("#/hooks/query/use-config", () => ({
   useConfig: () => ({ data: { feature_flags: {} } }),
 }));
@@ -688,6 +699,33 @@ describe("Sidebar", () => {
       );
     },
   );
+
+  it("offers Test VMs only where the backend runs the VM harness", () => {
+    vmHarness.isAvailable = false;
+    const { unmount } = renderSidebar("/conversations");
+    expect(screen.queryByTestId("sidebar-test-vms-link")).toBeNull();
+    unmount();
+
+    vmHarness.isAvailable = true;
+    renderSidebar("/test-vms");
+    const link = screen.getByTestId("sidebar-test-vms-link");
+    expect(link).toHaveAttribute("href", "/test-vms");
+    expect(link).toHaveAttribute("aria-current", "page");
+  });
+
+  it("pins the GitHub and Test VMs pages as the home route", () => {
+    vmHarness.isAvailable = true;
+    const pinKey = getPinnedHomeRouteKey("local", null);
+    renderSidebar("/conversations");
+
+    fireEvent.click(screen.getByTestId("sidebar-pin-home-toggle-github"));
+    expect(window.localStorage.getItem(pinKey)).toBe(JSON.stringify("/github"));
+
+    fireEvent.click(screen.getByTestId("sidebar-pin-home-toggle-test-vms"));
+    expect(window.localStorage.getItem(pinKey)).toBe(
+      JSON.stringify("/test-vms"),
+    );
+  });
 
   it("pins and unpins a sidebar page as the home route without navigating", () => {
     // Arrange: the mocked active backend is `local` with no org.

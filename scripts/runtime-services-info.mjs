@@ -44,6 +44,8 @@ import { pathToFileURL } from "node:url";
  *   accepted for backward compat with older launchers. Remove after one release.
  * @param {"vite"|"static"} [options.frontendKind="vite"] - Whether the
  *   frontend port hosts Vite or a static build. Only affects the description.
+ * @param {object} [options.vmHarness] - GUI VM test harness info (omit when
+ *   the harness is not running). `{description, api_prefix, plugin_path}`.
  * @param {object} [options.automation] - Automation backend info. Skipped
  *   entirely unless `.url` or `.port` is provided, so passing `{}` is safe.
  * @param {string} [options.automation.url] - Explicit automation base URL, from
@@ -69,6 +71,7 @@ export function buildRuntimeServicesInfo(options) {
     frontendPort = vitePort,
     frontendKind = "vite",
     automation,
+    vmHarness,
   } = options;
 
   // Prefer an explicit URL (containers reach the agent-server over a specific
@@ -138,6 +141,15 @@ export function buildRuntimeServicesInfo(options) {
       docs_url: `${automationBaseUrl}${apiPrefix}/docs`,
       openapi_url: `${automationBaseUrl}${apiPrefix}/openapi.json`,
       auth_env_var: authEnvVar,
+    };
+  }
+
+  if (vmHarness?.plugin_path) {
+    // `plugin_path` is a path on the agent-server's machine, not the agent's.
+    services.vm_harness = {
+      description: vmHarness.description,
+      api_prefix: vmHarness.api_prefix,
+      plugin_path: vmHarness.plugin_path,
     };
   }
 

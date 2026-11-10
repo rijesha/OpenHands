@@ -1,4 +1,5 @@
 import { ArrowLeft, ExternalLink } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   GithubWorkItemDetail,
@@ -6,7 +7,12 @@ import type {
 } from "#/api/git-provider-items-service";
 import { MarkdownRenderer } from "#/components/features/markdown/markdown-renderer";
 import { BrandButton } from "#/components/features/settings/brand-button";
+import {
+  TestEnvironmentSelect,
+  type TestEnvironment,
+} from "#/components/features/vm-harness/test-environment-select";
 import { useGithubWorkItem } from "#/hooks/query/use-github-work-items";
+import { useVmHarness } from "#/hooks/query/use-vm-harness";
 import { useLaunchGithubAgent } from "#/hooks/use-launch-github-agent";
 import { I18nKey } from "#/i18n/declaration";
 import { formatRelativeTime } from "#/utils/format-relative-time";
@@ -16,6 +22,18 @@ import {
   type GithubAgentAction,
 } from "#/utils/github-agent-prompts";
 import { cn, getProviderName } from "#/utils/utils";
+import { GithubAgentRuns } from "./github-agent-runs";
+import { GithubVmRuns } from "./github-vm-runs";
+import { GithubLinkedItems } from "./github-linked-items";
+import {
+  GithubPipelines,
+  GithubPullRequestActions,
+} from "./github-pull-request-actions";
+import {
+  GithubChangedFiles,
+  GithubChecks,
+  GithubDiscussion,
+} from "./github-pull-request-status";
 import { GithubLoadError } from "./github-load-error";
 import { GithubWorkItemState } from "./github-work-item-state";
 
@@ -35,6 +53,14 @@ const ACTION_COPY: Record<
     label: I18nKey.GITHUB$ACTION_REVIEW_PR,
     description: I18nKey.GITHUB$ACTION_REVIEW_PR_DESCRIPTION,
   },
+  address_review_comments: {
+    label: I18nKey.GITHUB$ACTION_ADDRESS_REVIEW,
+    description: I18nKey.GITHUB$ACTION_ADDRESS_REVIEW_DESCRIPTION,
+  },
+  fix_failing_checks: {
+    label: I18nKey.GITHUB$ACTION_FIX_CHECKS,
+    description: I18nKey.GITHUB$ACTION_FIX_CHECKS_DESCRIPTION,
+  },
 };
 
 interface GithubAgentActionsProps {
@@ -45,6 +71,9 @@ interface GithubAgentActionsProps {
 function GithubAgentActions({ repository, item }: GithubAgentActionsProps) {
   const { t } = useTranslation("openhands");
   const { launch, pendingAction, isLaunching } = useLaunchGithubAgent();
+  const { isAvailable: hasVmHarness } = useVmHarness();
+  const [testEnvironment, setTestEnvironment] = useState<TestEnvironment>();
+  const [instructions, setInstructions] = useState("");
   const actions =
     item.kind === "issue"
       ? GITHUB_ISSUE_AGENT_ACTIONS
@@ -61,6 +90,31 @@ function GithubAgentActions({ repository, item }: GithubAgentActionsProps) {
       >
         {t(I18nKey.GITHUB$AGENT_ACTIONS)}
       </h3>
+      {hasVmHarness ? (
+        <TestEnvironmentSelect
+          value={testEnvironment}
+          onChange={setTestEnvironment}
+          isDisabled={isLaunching}
+        />
+      ) : null}
+      <div className="flex flex-col gap-1">
+        <label
+          htmlFor="github-agent-instructions"
+          className="text-xs font-medium text-contrast"
+        >
+          {t(I18nKey.GITHUB$INSTRUCTIONS_LABEL)}
+        </label>
+        <textarea
+          id="github-agent-instructions"
+          data-testid="github-agent-instructions"
+          value={instructions}
+          rows={2}
+          disabled={isLaunching}
+          placeholder={t(I18nKey.GITHUB$INSTRUCTIONS_PLACEHOLDER)}
+          onChange={(event) => setInstructions(event.target.value)}
+          className="w-full rounded-md border border-border bg-canvas-base p-2 text-sm text-contrast"
+        />
+      </div>
       <ul className="flex flex-col gap-3">
         {actions.map((action, index) => (
           <li
@@ -73,7 +127,12 @@ function GithubAgentActions({ repository, item }: GithubAgentActionsProps) {
               testId={`github-agent-action-${action}`}
               isDisabled={isLaunching}
               aria-busy={pendingAction === action}
-              onClick={() => launch(action, repository, item)}
+              onClick={() =>
+                launch(action, repository, item, {
+                  guiVm: testEnvironment,
+                  instructions,
+                })
+              }
               className="shrink-0 whitespace-nowrap sm:min-w-40"
             >
               {pendingAction === action
@@ -169,6 +228,8 @@ interface GithubWorkItemDetailPanelProps {
   kind: GithubWorkItemKind;
   number: number;
   onBack: () => void;
+  /** Opens a linked issue or pull request of this repository. */
+  onOpenItem: (kind: GithubWorkItemKind, number: number) => void;
 }
 
 export function GithubWorkItemDetailPanel({
@@ -176,6 +237,7 @@ export function GithubWorkItemDetailPanel({
   kind,
   number,
   onBack,
+  onOpenItem,
 }: GithubWorkItemDetailPanelProps) {
   const { t } = useTranslation("openhands");
   const {
@@ -239,6 +301,26 @@ export function GithubWorkItemDetailPanel({
 
           <GithubAgentActions repository={repository} item={item} />
 
+          <GithubPullRequestActions repository={repository} item={item} />
+
+          <GithubAgentRuns repository={repository} item={item} />
+
+          <GithubVmRuns repository={repository} number={item.number} />
+
+          {item.kind === "pull_request" ? (
+            <>
+              <GithubChecks repository={repository} sha={item.headSha} />
+              <GithubPipelines repository={repository} sha={item.headSha} />
+            </>
+          ) : null}
+
+          <GithubLinkedItems
+            repository={repository}
+            number={item.number}
+            body={item.body}
+            onOpenItem={onOpenItem}
+          />
+
           <div
             data-testid="github-work-item-body"
             className={cn(
@@ -256,6 +338,16 @@ export function GithubWorkItemDetailPanel({
               </p>
             )}
           </div>
+
+          {item.kind === "pull_request" ? (
+            <GithubChangedFiles repository={repository} number={item.number} />
+          ) : null}
+
+          <GithubDiscussion
+            repository={repository}
+            kind={item.kind}
+            number={item.number}
+          />
         </>
       ) : null}
     </div>

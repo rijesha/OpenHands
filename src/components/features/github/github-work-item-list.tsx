@@ -1,4 +1,10 @@
+import { Bot } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useActiveBackend } from "#/contexts/active-backend-context";
+import {
+  githubRunKey,
+  useGithubAgentRunsStore,
+} from "#/stores/github-agent-runs-store";
 import type { GithubWorkItem } from "#/api/git-provider-items-service";
 import { BrandButton } from "#/components/features/settings/brand-button";
 import { I18nKey } from "#/i18n/declaration";
@@ -10,6 +16,7 @@ import { GithubWorkItemState } from "./github-work-item-state";
 const MAX_ROW_LABELS = 3;
 
 interface GithubWorkItemListProps {
+  repository: string;
   items: GithubWorkItem[];
   selectedNumber: number | null;
   onSelect: (number: number) => void;
@@ -22,6 +29,7 @@ interface GithubWorkItemListProps {
 }
 
 export function GithubWorkItemList({
+  repository,
   items,
   selectedNumber,
   onSelect,
@@ -33,6 +41,8 @@ export function GithubWorkItemList({
   onLoadMore,
 }: GithubWorkItemListProps) {
   const { t, i18n } = useTranslation("openhands");
+  const { backend } = useActiveBackend();
+  const runs = useGithubAgentRunsStore((state) => state.runs);
 
   if (isLoading) {
     return (
@@ -90,6 +100,18 @@ export function GithubWorkItemList({
                     </span>
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                       <span className="tabular-nums">#{item.number}</span>
+                      {runs[githubRunKey(backend.id, repository, item.number)]
+                        ?.length ? (
+                        <span
+                          role="img"
+                          data-testid={`github-work-item-has-run-${item.number}`}
+                          aria-label={t(I18nKey.GITHUB$HAS_AGENT_RUN)}
+                          title={t(I18nKey.GITHUB$HAS_AGENT_RUN)}
+                          className="inline-flex"
+                        >
+                          <Bot className="size-3.5 text-primary" aria-hidden />
+                        </span>
+                      ) : null}
                       {item.authorLogin ? (
                         <span>{item.authorLogin}</span>
                       ) : null}

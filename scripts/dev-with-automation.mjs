@@ -62,7 +62,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve, dirname, isAbsolute } from "node:path";
+import { join, resolve, dirname, isAbsolute, delimiter } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -113,6 +113,7 @@ const DEFAULT_AUTOMATION_VERSION = SHARED_DEFAULTS.versions.automation;
 const DEFAULT_AUTOMATION_SDK_VERSION = SHARED_DEFAULTS.versions.agentServer;
 const DEFAULT_BACKEND_PORT = SHARED_DEFAULTS.ports.agentServer;
 const DEFAULT_AUTOMATION_PORT = SHARED_DEFAULTS.ports.automation;
+const DEFAULT_VM_HARNESS_PORT = SHARED_DEFAULTS.ports.vmHarness;
 const DEFAULT_POSTHOG_API_KEY = SHARED_DEFAULTS.telemetry.posthogApiKey;
 const DEFAULT_POSTHOG_HOST = SHARED_DEFAULTS.telemetry.posthogHost;
 
@@ -203,6 +204,7 @@ function parseArgs() {
     public: false,
     frontendOnly: false,
     backendOnly: false,
+    vmHarness: false,
     host: null,
     allowLanSessionKey: false,
   };
@@ -247,6 +249,12 @@ function parseArgs() {
       case "--allow-lan-session-key":
         config.allowLanSessionKey = true;
         break;
+      case "--vm-harness":
+        config.vmHarness = true;
+        break;
+      case "--no-vm-harness":
+        config.noVmHarness = true;
+        break;
       case "-H":
       case "--host":
         config.host = args[++i];
@@ -284,6 +292,8 @@ OPTIONS:
   --dynamic                   Force Vite dev server when a wrapper defaults static
   --frontend-only             Start only the frontend behind ingress
   --backend-only              Start only agent-server + automation behind ingress
+  --vm-harness                Start the GUI VM test harness (Hyper-V). Already the default on Windows with pwsh
+  --no-vm-harness             Do not start the GUI VM test harness (env: OH_VM_HARNESS=0)
   --allow-lan-session-key      Inject the session key on a non-loopback bind (opt-in)
   -v, --verbose               Set backend log level to DEBUG (default: WARNING)
   -h, --help                  Show this help
@@ -454,6 +464,19 @@ async function buildConfig(args, env = process.env) {
   const launchFrontend = !backendOnly;
   const launchAgentServer = !frontendOnly;
   const launchAutomation = !frontendOnly;
+  // The GUI VM harness needs a hypervisor on this machine, so it never runs
+  // when the agent-server itself is not started here. It starts by default on
+  // Windows (Hyper-V provider) when PowerShell 7 is installed; its data folder
+  // is chosen on the Test VMs page. Opt out with --no-vm-harness or OH_VM_HARNESS=0.
+  const vmHarnessOptOut =
+    Boolean(args.noVmHarness) || env.OH_VM_HARNESS === "0";
+  const vmHarnessRequested =
+    Boolean(args.vmHarness) || env.OH_VM_HARNESS === "1";
+  const vmHarnessAuto = process.platform === "win32" && commandExists("pwsh");
+  const launchVmHarness =
+    !frontendOnly &&
+    !vmHarnessOptOut &&
+    (vmHarnessRequested || vmHarnessAuto);
   const isPublic = args.public;
 
   if (isPublic && frontendOnly) {
@@ -480,6 +503,9 @@ async function buildConfig(args, env = process.env) {
   const preferredAutomationPort =
     parseInt(env.OH_CANVAS_SAFE_AUTOMATION_PORT, 10) || DEFAULT_AUTOMATION_PORT;
   const preferredVitePort = parseInt(env.OH_CANVAS_SAFE_VITE_PORT, 10) || 3001;
+  const preferredVmHarnessPort =
+    parseInt(env.OH_CANVAS_SAFE_VM_HARNESS_PORT, 10) ||
+    DEFAULT_VM_HARNESS_PORT;
 
   // Fail fast if any preferred port for a service in this mode is already in
   // use, so a second agent-canvas instance is detected (#16904).
@@ -489,6 +515,9 @@ async function buildConfig(args, env = process.env) {
   }
   if (launchAutomation) {
     requiredPorts.push({ name: "automation", port: preferredAutomationPort });
+  }
+  if (launchVmHarness) {
+    requiredPorts.push({ name: "vm-harness", port: preferredVmHarnessPort });
   }
 
   logStep("ports", "Checking ports...");
@@ -605,6 +634,8 @@ async function buildConfig(args, env = process.env) {
     launchFrontend,
     launchAgentServer,
     launchAutomation,
+    launchVmHarness,
+    vmHarnessPort: preferredVmHarnessPort,
 
     verbose: args.verbose,
     bindHost,
@@ -826,6 +857,7 @@ async function waitForService(name, url, timeoutMs = 30000, proc = null) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const AUTOMATION_ROUTE_PREFIX = "/api/automation";
+const VM_HARNESS_ROUTE_PREFIX = "/api/vm-harness";
 const AGENT_SERVER_ROUTE_PREFIXES = [
   "/api",
   "/sockets",
@@ -853,6 +885,14 @@ function getLocalServiceRoutes(config) {
     routes.push([
       AUTOMATION_ROUTE_PREFIX,
       `http://127.0.0.1:${config.autoBackendPort}`,
+    ]);
+  }
+
+  // Longest prefix wins, so this takes precedence over the agent-server's /api.
+  if (config.launchVmHarness) {
+    routes.push([
+      VM_HARNESS_ROUTE_PREFIX,
+      `http://127.0.0.1:${config.vmHarnessPort}`,
     ]);
   }
 
@@ -918,6 +958,9 @@ function getRejectPrefixes(config) {
   const prefixes = [];
   if (!config.launchAutomation) {
     prefixes.push(AUTOMATION_ROUTE_PREFIX);
+  }
+  if (!config.launchVmHarness) {
+    prefixes.push(VM_HARNESS_ROUTE_PREFIX);
   }
   if (!config.launchAgentServer) {
     for (const prefix of AGENT_SERVER_ROUTE_PREFIXES) {
@@ -1249,6 +1292,96 @@ export function buildAutomationCorsOrigins(config) {
     .join(",");
 }
 
+/** Where the rendered gui-vm-testing plugin (skill + MCP config) lives. */
+export function getVmHarnessPluginDir(config) {
+  return join(config.stateDir, "vm-harness", "plugin");
+}
+
+/**
+ * Fails fast, before any service starts, when the harness is enabled on a host
+ * it cannot drive. Hyper-V (Windows) is implemented; UTM (macOS) is not yet.
+ */
+function checkVmHarnessPrerequisites(config) {
+  if (!config.launchVmHarness) return;
+  if (process.platform !== "win32") {
+    throw new Error(
+      `--vm-harness: no VM provider for ${process.platform} yet (Hyper-V on Windows is supported; UTM on macOS is planned).`,
+    );
+  }
+  if (!commandExists("pwsh")) {
+    throw new Error(
+      "--vm-harness needs PowerShell 7 (pwsh) on PATH to manage Hyper-V VMs.",
+    );
+  }
+}
+
+/**
+ * Starts the GUI VM harness (scripts/vm-harness). It validates the stack's
+ * session key on every request itself: the ingress forwards unauthenticated.
+ */
+function startVmHarness(config, { onUnexpectedExit } = {}) {
+  logService(
+    "vm-harness",
+    `Starting on port ${config.vmHarnessPort}...`,
+    c.green,
+  );
+  const home = homedir();
+  return spawnService(
+    "vm-harness",
+    process.execPath,
+    [join(__dirname, "vm-harness", "cli.mjs"), "serve"],
+    {
+      cwd: projectRoot,
+      color: c.magenta,
+      onUnexpectedExit,
+      env: {
+        VM_HARNESS_PORT: String(config.vmHarnessPort),
+        OH_VM_HARNESS_API_KEY: config.sessionApiKey ?? "",
+        VM_HARNESS_PLUGIN_DIR: getVmHarnessPluginDir(config),
+        // vm_put_file may only read from workspace folders the agents use.
+        VM_HARNESS_WORKSPACE_ROOTS: [
+          join(config.stateDir, "workspaces"),
+          join(home, "workspace"),
+          config.automationWorkspaceBase,
+        ]
+          .filter(Boolean)
+          .join(delimiter),
+      },
+    },
+  );
+}
+
+/**
+ * Like superviseService, but for an optional helper: restarts it a few times,
+ * then gives up with a log line. It never stops the rest of the stack.
+ */
+export function superviseOptionalService(
+  name,
+  start,
+  { maxRestarts = 3, restartDelayMs = 2000 } = {},
+) {
+  let restarts = 0;
+  const launch = () =>
+    start({
+      onUnexpectedExit: (reason) => {
+        if (restarts < maxRestarts) {
+          restarts += 1;
+          logService(
+            name,
+            `Restarting (${restarts}/${maxRestarts})...`,
+            c.yellow,
+          );
+          setTimeout(launch, restartDelayMs);
+          return;
+        }
+        logError(
+          `The optional ${name} service exited ${maxRestarts + 1} times (last: ${reason}) and stays down; the rest of the stack keeps running.`,
+        );
+      },
+    });
+  launch();
+}
+
 function startAutomationBackend(config) {
   logService(
     "automation",
@@ -1539,6 +1672,14 @@ export function buildAutomationRuntimeServicesInfo(config, env = process.env) {
         ? { url: `http://${agentHostAlias}:${config.ingressPort}` }
         : { port: config.autoBackendPort }
       : undefined,
+    vmHarness: config.launchVmHarness
+      ? {
+          description:
+            "GUI VM test harness: disposable Windows/Linux VMs driven by screenshots, mouse and keyboard. Only conversations started with the gui-vm-testing plugin get its tools.",
+          api_prefix: VM_HARNESS_ROUTE_PREFIX,
+          plugin_path: getVmHarnessPluginDir(config),
+        }
+      : undefined,
   });
 }
 
@@ -1769,6 +1910,14 @@ function printBanner(config) {
       ) + `${c.green}${c.bold}║${c.reset}`,
     );
   }
+  if (config.launchVmHarness) {
+    console.log(
+      ansiPadEnd(
+        `${c.green}${c.bold}║${c.reset}  VM harness:   ${c.cyan}http://localhost:${config.ingressPort}/api/vm-harness/health${c.reset}`,
+        BOX_INNER,
+      ) + `${c.green}${c.bold}║${c.reset}`,
+    );
+  }
   console.log(
     `${c.green}${c.bold}║${c.reset}                                                              ${c.green}${c.bold}║${c.reset}`,
   );
@@ -1949,6 +2098,7 @@ async function main(options = {}) {
   if (typeof extraPrereqs === "function") {
     extraPrereqs(config);
   }
+  checkVmHarnessPrerequisites(config);
   // Before any service starts, so a problem with the pinned secret stops the
   // launch instead of leaving the agent-server running without automation.
   if (config.launchAutomation) {
@@ -2012,6 +2162,13 @@ async function main(options = {}) {
   const automationProc = config.launchAutomation
     ? startAutomationBackend(config)
     : null;
+
+  // 3b. Optional GUI VM harness (opt-in with --vm-harness / OH_VM_HARNESS=1)
+  if (config.launchVmHarness) {
+    superviseOptionalService("vm-harness", (hooks) =>
+      startVmHarness(config, hooks),
+    );
+  }
 
   // 4. Start frontend server (Vite dev server OR static server)
   if (config.launchFrontend) {

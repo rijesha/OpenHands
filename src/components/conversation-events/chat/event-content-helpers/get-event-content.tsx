@@ -21,11 +21,16 @@ import { getActionContent } from "./get-action-content";
 import { getObservationContent } from "./get-observation-content";
 import {
   getACPToolCallContent,
+  getACPToolCallImageUrls,
   getACPToolCallTitleKey,
   stripRedundantTitlePrefix,
 } from "./get-acp-tool-call-content";
+import { McpObservationContent } from "../event-message-components/mcp-observation-content";
 import { TaskTrackingObservationContent } from "../task-tracking/task-tracking-observation-content";
-import { TaskTrackerObservation } from "#/types/agent-server/core/base/observation";
+import {
+  MCPToolObservation,
+  TaskTrackerObservation,
+} from "#/types/agent-server/core/base/observation";
 import { SkillReadyEvent, isSkillReadyEvent } from "./create-skill-ready-event";
 import { resolveVisualizerBody } from "../../../features/chat/tool-visualizers/dispatcher";
 import i18n from "#/i18n";
@@ -312,6 +317,10 @@ const getCanvasUIClientObservationContent = (
   return `UI command '${correspondingAction.action.command}' dispatched to the Agent Canvas frontend.`;
 };
 
+/** `image_urls` of an MCP observation's image blocks. */
+const getMcpImageUrls = (observation: MCPToolObservation): string[] =>
+  observation.content.flatMap((c) => (c.type === "image" ? c.image_urls : []));
+
 export const getEventContent = (
   event: OpenHandsEvent | SkillReadyEvent,
   correspondingAction?: ActionEvent,
@@ -341,6 +350,17 @@ export const getEventContent = (
       details = (
         <TaskTrackingObservationContent
           event={event as ObservationEvent<TaskTrackerObservation>}
+        />
+      );
+    } else if (
+      event.observation.kind === "MCPToolObservation" &&
+      getMcpImageUrls(event.observation).length > 0
+    ) {
+      details = (
+        <McpObservationContent
+          text={getObservationContent(event)}
+          imageUrls={getMcpImageUrls(event.observation)}
+          label={event.observation.tool_name}
         />
       );
     } else {
@@ -374,7 +394,17 @@ export const getEventContent = (
       // as ``"Reading Read /path"``). See ``stripRedundantTitlePrefix``.
       title: stripRedundantTitlePrefix(event),
     });
-    details = getACPToolCallContent(event);
+    const acpImages = getACPToolCallImageUrls(event);
+    details =
+      acpImages.length > 0 ? (
+        <McpObservationContent
+          text={getACPToolCallContent(event)}
+          imageUrls={acpImages}
+          label={event.title}
+        />
+      ) : (
+        getACPToolCallContent(event)
+      );
   } else if (
     // Lenient fallback for action-like events that fail the strict isActionEvent() guard
     // (e.g., missing tool_name or tool_call_id). Extract a title from the action kind

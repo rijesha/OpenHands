@@ -7,6 +7,8 @@ const EXTENSIONS_DETAIL_PATHS = ["/skills", "/mcp", "/plugins"] as const;
 // rail-level destinations rather than Customize details.
 const APPS_MANAGEMENT_PATH = "/apps";
 
+const TEST_VMS_RUNS_PREFIX = "/test-vms/runs/";
+
 export type MobileTopBarMode = "menu" | "back";
 
 export interface MobileTopBarState {
@@ -28,6 +30,15 @@ export function getMobileTopBarState(pathname: string): MobileTopBarState {
       mode: "back",
       backTo: SETTINGS_PREFIX,
       backLabelKey: I18nKey.SETTINGS$TITLE,
+    };
+  }
+
+  // A run's report belongs to the Test VMs page it was opened from.
+  if (pathname.startsWith(TEST_VMS_RUNS_PREFIX)) {
+    return {
+      mode: "back",
+      backTo: "/test-vms",
+      backLabelKey: I18nKey.VM_HARNESS$PAGE_TITLE,
     };
   }
 

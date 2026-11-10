@@ -1,0 +1,15 @@
+{
+  "files.simpleDialog.enable": true,
+  "update.mode": "none",
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  "extensions.ignoreRecommendations": true,
+  "telemetry.telemetryLevel": "off",
+  "workbench.startupEditor": "none",
+  "workbench.tips.enabled": false,
+  "security.workspace.trust.enabled": false,
+  "window.newWindowDimensions": "maximized",
+  "terminal.integrated.gpuAcceleration": "off",
+  "chat.disableAIFeatures": true,
+  "workbench.secondarySideBar.defaultVisibility": "hidden"
+}

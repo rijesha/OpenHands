@@ -1,0 +1,6 @@
+{
+  "name": "gui-vm-testing",
+  "version": "0.1.0",
+  "description": "Verify changes in a disposable full-GUI virtual machine (Windows or Linux) by driving the screen with mouse and keyboard, with screenshot evidence.",
+  "license": "MIT"
+}

@@ -208,6 +208,16 @@ export interface RuntimeServicesInfo {
       openapi_url?: string;
       auth_env_var?: string;
     };
+    // GUI VM test harness. Read by the launch UI to attach the
+    // `gui-vm-testing` plugin to opted-in conversations; deliberately NOT
+    // rendered into `<RUNTIME_SERVICES>`, because every other conversation
+    // would then see a service it has no tools for. `plugin_path` is a path
+    // on the agent-server's machine.
+    vm_harness?: {
+      description?: string;
+      api_prefix?: string;
+      plugin_path?: string;
+    };
   };
 }
 

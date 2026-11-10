@@ -143,6 +143,28 @@ export const APP_UPDATE_QUERY_KEYS = {
  * backend + org because the token used for the request comes from the active
  * backend's secrets.
  */
+export const VM_HARNESS_QUERY_KEYS = {
+  plugin: (backendId: string) => ["vm-harness", "plugin", backendId] as const,
+  runs: (backendId: string) => ["vm-harness", "runs", backendId] as const,
+  images: (backendId: string) => ["vm-harness", "images", backendId] as const,
+  status: (backendId: string) => ["vm-harness", "status", backendId] as const,
+  settings: (backendId: string) =>
+    ["vm-harness", "settings", backendId] as const,
+  leases: (backendId: string) => ["vm-harness", "leases", backendId] as const,
+  run: (backendId: string, runId: string) =>
+    ["vm-harness", "run", backendId, runId] as const,
+  runScreenshot: (backendId: string, runId: string, name: string) =>
+    ["vm-harness", "run-screenshot", backendId, runId, name] as const,
+  bootShot: (backendId: string, runId: string) =>
+    ["vm-harness", "boot-shot", backendId, runId] as const,
+  leaseShot: (backendId: string, leaseId: string) =>
+    ["vm-harness", "lease-shot", backendId, leaseId] as const,
+  browse: (backendId: string, path: string) =>
+    ["vm-harness", "browse", backendId, path] as const,
+  /** Prefix of every harness query, for invalidating after a write. */
+  root: ["vm-harness"] as const,
+};
+
 export const GITHUB_WORK_ITEMS_QUERY_KEYS = {
   all: ["github-work-items"] as const,
   list: (
@@ -151,6 +173,8 @@ export const GITHUB_WORK_ITEMS_QUERY_KEYS = {
     repository: string,
     kind: string,
     state: string,
+    search = "",
+    involvement = "all",
   ) =>
     [
       "github-work-items",
@@ -160,6 +184,68 @@ export const GITHUB_WORK_ITEMS_QUERY_KEYS = {
       repository,
       kind,
       state,
+      search,
+      involvement,
+    ] as const,
+  discussion: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    kind: string,
+    number: number,
+  ) =>
+    [
+      "github-work-items",
+      "discussion",
+      backendId,
+      orgId,
+      repository,
+      kind,
+      number,
+    ] as const,
+  checks: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    sha: string,
+  ) =>
+    ["github-work-items", "checks", backendId, orgId, repository, sha] as const,
+  runs: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    sha: string,
+  ) =>
+    ["github-work-items", "runs", backendId, orgId, repository, sha] as const,
+  files: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    number: number,
+  ) =>
+    [
+      "github-work-items",
+      "files",
+      backendId,
+      orgId,
+      repository,
+      number,
+    ] as const,
+  linked: (
+    backendId: string,
+    orgId: string | null,
+    repository: string,
+    number: number,
+    body: string,
+  ) =>
+    [
+      "github-work-items",
+      "linked",
+      backendId,
+      orgId,
+      repository,
+      number,
+      body,
     ] as const,
   detail: (
     backendId: string,

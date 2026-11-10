@@ -147,6 +147,26 @@ const getACPDisplayBlocks = (event: ACPToolCallEvent): ACPDisplayBlock[] => {
   return blocks;
 };
 
+/**
+ * Inline images of an ACP tool call (a VM screenshot, say) as data URLs. Only
+ * `content` blocks wrapping an image are read; `raw_output` repeats the same
+ * bytes in a provider-specific shape.
+ */
+export const getACPToolCallImageUrls = (event: ACPToolCallEvent): string[] => {
+  const urls: string[] = [];
+  for (const block of event.content ?? []) {
+    if (block.type !== "content") continue;
+    const inner = asRecord(block.content);
+    if (inner?.type !== "image") continue;
+    const data = inner.data;
+    const mime = inner.mime_type ?? inner.mimeType;
+    if (typeof data === "string" && data && typeof mime === "string") {
+      urls.push(`data:${mime};base64,${data}`);
+    }
+  }
+  return urls;
+};
+
 const diffLines = (text: string | null, prefix: string): string[] =>
   text
     ? text
@@ -182,7 +202,32 @@ const formatDiffBlock = (
  * command line; for others we fall back to a pretty-printed JSON dump of
  * the input, unless a diff already shows what the call changed.
  */
+/**
+ * The report an agent submitted at the end of a GUI VM test, as a verdict line
+ * and its summary. Null for any other tool call (or a report still being sent).
+ */
+const getVmReportContent = (event: ACPToolCallEvent): string | null => {
+  if (!/vm-harness__submit_report$/.test(event.title)) return null;
+  const input = asRecord(event.raw_input);
+  if (!input || typeof input.passed !== "boolean") return null;
+  const confidence =
+    typeof input.confidence === "string"
+      ? ` (${input.confidence} confidence)`
+      : "";
+  const verdict = input.passed ? "GUI test passed" : "GUI test failed";
+  const summary = typeof input.summary === "string" ? input.summary.trim() : "";
+  return `**${verdict}${confidence}**${
+    summary
+      ? `
+
+${summary}`
+      : ""
+  }`;
+};
+
 export const getACPToolCallContent = (event: ACPToolCallEvent): string => {
+  const report = getVmReportContent(event);
+  if (report) return report;
   const toolKind = event.tool_kind;
   const rawInput = event.raw_input;
   const rawOutput = event.raw_output;
@@ -191,6 +236,7 @@ export const getACPToolCallContent = (event: ACPToolCallEvent): string => {
   const blocks = getACPDisplayBlocks(event);
   const diffBlocks = blocks.filter((block) => block.type === "diff");
   const textBlocks = blocks.filter((block) => block.type === "text");
+  const hasImages = getACPToolCallImageUrls(event).length > 0;
 
   const sections: string[] = [];
 
@@ -229,7 +275,11 @@ export const getACPToolCallContent = (event: ACPToolCallEvent): string => {
     // already shows what the call did, so raw_output is skipped alongside
     // one — except on failure, where it may be the only place the error lives.
     const outputStr = truncate(stringifyPayload(rawOutput).trim());
-    if (diffBlocks.length === 0) {
+    // An image result is shown as the image; its raw_output is the base64 payload.
+    const imageOnly = hasImages && !isError;
+    if (imageOnly) {
+      // The image itself is the output.
+    } else if (diffBlocks.length === 0) {
       const outputBody =
         outputStr || i18n.t(I18nKey.OBSERVATION$COMMAND_NO_OUTPUT);
       sections.push(`${outputLabel}\n${markdownFence(outputBody)}`);

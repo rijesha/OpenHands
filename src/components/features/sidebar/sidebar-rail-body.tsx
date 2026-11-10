@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   ChevronRight,
+  MonitorPlay,
   Plus,
   Server,
   Settings,
@@ -44,6 +45,8 @@ import {
 } from "./sidebar-layout";
 import { useCanvasExtensionsRuntime } from "#/components/features/canvas-extensions/canvas-extensions-runtime";
 import { CanvasExtensionIcon } from "#/components/features/canvas-extensions/canvas-extension-icon";
+import { useVmHarness } from "#/hooks/query/use-vm-harness";
+import { TEST_VMS_PATH } from "#/api/vm-harness-service";
 import type { Backend } from "#/api/backend-registry/types";
 
 const ICON_SIZE = 18;
@@ -98,6 +101,8 @@ export function SidebarRailBody({
 }: SidebarRailBodyProps) {
   const { t } = useTranslation("openhands");
   const { pages: canvasExtensionPages } = useCanvasExtensionsRuntime();
+  // Test VMs only exists where the VM harness runs, so it is not offered elsewhere.
+  const { isAvailable: hasVmHarness } = useVmHarness();
   const backendCloseTimerRef = collapsedBackendCloseTimer;
   const { isPinnedRoute, togglePinnedRoute } = usePinnedHomeRoute();
   const [backendMenuOpen, setBackendMenuOpen] = React.useState(false);
@@ -273,7 +278,24 @@ export function SidebarRailBody({
           testId="sidebar-github-link"
           collapsed={collapsed}
           icon={<FaGithub size={ICON_SIZE} aria-hidden />}
+          pinAction={buildPinAction(
+            GITHUB_PATH,
+            "sidebar-pin-home-toggle-github",
+          )}
         />
+        {hasVmHarness ? (
+          <SidebarNavLink
+            to={TEST_VMS_PATH}
+            label={t(I18nKey.VM_HARNESS$PAGE_TITLE)}
+            testId="sidebar-test-vms-link"
+            collapsed={collapsed}
+            icon={<MonitorPlay size={ICON_SIZE} aria-hidden />}
+            pinAction={buildPinAction(
+              TEST_VMS_PATH,
+              "sidebar-pin-home-toggle-test-vms",
+            )}
+          />
+        ) : null}
         {canvasExtensionPages.map((page) => (
           <SidebarNavLink
             key={`${page.extension.name}:${page.contribution.id}`}

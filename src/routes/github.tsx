@@ -89,6 +89,17 @@ export default function GithubRoute() {
           { replace: true },
         )
       }
+      onOpenItem={(nextKind, number) =>
+        update(
+          {
+            [TAB_PARAM]: nextKind === "pull_request" ? PULL_REQUESTS_TAB : null,
+            // A linked item may be closed while the list shows open ones.
+            [STATE_PARAM]: "all",
+            [ITEM_PARAM]: String(number),
+          },
+          { replace: false },
+        )
+      }
       onSelectItem={(number) =>
         update(
           { [ITEM_PARAM]: number === null ? null : String(number) },

@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { I18nKey } from "#/i18n/declaration";
 import { useNavigation } from "#/context/navigation-context";
 import { useCloseOnEscape } from "#/hooks/use-close-on-escape";
+import { useVmHarness } from "#/hooks/query/use-vm-harness";
 import { useCommandMenuStore } from "#/stores/command-menu-store";
 import { useSidebarStore } from "#/stores/sidebar-store";
 import { cn } from "#/utils/utils";
@@ -110,12 +111,14 @@ export function CommandMenu() {
     };
   }, [isOpen]);
 
+  const { isAvailable: hasVmHarness } = useVmHarness();
   const items = React.useMemo(
     () =>
       createCommandMenuItems({
         toggleSidebar: () => useSidebarStore.getState().toggleCollapsed(),
+        hasVmHarness,
       }),
-    [],
+    [hasVmHarness],
   );
 
   const filteredItems = React.useMemo(

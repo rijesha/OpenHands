@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getACPToolCallContent,
+  getACPToolCallImageUrls,
   getACPToolCallTitleKey,
   stripRedundantTitlePrefix,
 } from "#/components/conversation-events/chat/event-content-helpers/get-acp-tool-call-content";
@@ -435,5 +436,75 @@ describe("getACPToolCallResult", () => {
     expect(getACPToolCallResult(makeEvent({ status: "in_progress" }))).toBe(
       undefined,
     );
+  });
+});
+
+describe("ACP tool call images", () => {
+  const screenshot = makeEvent({
+    title: "mcp__vm-harness__desktop_screenshot",
+    tool_kind: "other",
+    raw_input: { vm: "l1" },
+    raw_output: [{ type: "image", source: { data: "QUJD" } }],
+    content: [
+      {
+        type: "content",
+        content: { type: "image", data: "QUJD", mime_type: "image/png" },
+      },
+      {
+        type: "content",
+        content: { type: "text", text: "saved: /runs/001.png" },
+      },
+    ],
+  });
+
+  it("returns inline images as data URLs", () => {
+    expect(getACPToolCallImageUrls(screenshot)).toEqual([
+      "data:image/png;base64,QUJD",
+    ]);
+    expect(getACPToolCallImageUrls(baseEvent)).toEqual([]);
+  });
+
+  it("keeps the base64 payload out of the card text but shows the text block", () => {
+    const text = getACPToolCallContent(screenshot);
+
+    expect(text).toContain("saved: /runs/001.png");
+    expect(text).not.toContain("QUJD");
+  });
+
+  it("does not print raw_output when an image is the only result", () => {
+    const imageOnly = makeEvent({
+      ...screenshot,
+      content: [screenshot.content![0]],
+    });
+
+    expect(getACPToolCallContent(imageOnly)).not.toContain("QUJD");
+  });
+});
+
+describe("VM test report", () => {
+  const report = makeEvent({
+    title: "mcp__vm-harness__submit_report",
+    tool_kind: "other",
+    raw_input: {
+      vm: "l1",
+      passed: false,
+      confidence: "high",
+      summary: "The Board item did not open the DTS file.",
+    },
+    raw_output: "report accepted: 3 steps, passed=false. Now call vm_stop.",
+  });
+
+  it("shows the verdict and summary instead of the raw JSON", () => {
+    const text = getACPToolCallContent(report);
+
+    expect(text).toContain("**GUI test failed (high confidence)**");
+    expect(text).toContain("The Board item did not open the DTS file.");
+    expect(text).not.toContain('"passed"');
+  });
+
+  it("leaves other tool calls alone", () => {
+    expect(
+      getACPToolCallContent(makeEvent({ title: "mcp__vm-harness__vm_stop" })),
+    ).toContain("Output:");
   });
 });

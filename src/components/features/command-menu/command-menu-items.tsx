@@ -1,4 +1,5 @@
 import React from "react";
+import { FaGithub } from "react-icons/fa6";
 import {
   Bot,
   Brain,
@@ -7,6 +8,7 @@ import {
   Keyboard,
   KeyRound,
   ListTodo,
+  MonitorPlay,
   PanelsTopLeft,
   Route,
   Search,
@@ -34,6 +36,8 @@ export const COMMAND_MENU_ROUTE = {
   customize: "/customize",
   automations: automationListPath(),
   mcp: "/mcp",
+  github: "/github",
+  testVms: "/test-vms",
   settings: "/settings",
   agentSettings: "/settings/agents",
   llmSettings: "/settings/llm",
@@ -52,6 +56,8 @@ export type CommandMenuItemId =
   | "customize"
   | "automations"
   | "mcp"
+  | "github"
+  | "test-vms"
   | "settings"
   | "agent-settings"
   | "llm-settings"
@@ -117,8 +123,11 @@ export const COMMAND_MENU_GROUP_ORDER: CommandMenuGroupId[] = [
 
 export const createCommandMenuItems = ({
   toggleSidebar,
+  hasVmHarness = false,
 }: {
   toggleSidebar: () => void;
+  /** Test VMs only exists where the backend runs the VM harness. */
+  hasVmHarness?: boolean;
 }): CommandMenuItemDefinition[] => {
   const items: CommandMenuItemDefinition[] = [
     {
@@ -151,6 +160,26 @@ export const createCommandMenuItems = ({
             keywords: getInterfaceCopy().commandMenuKeywords,
             icon: <Zap size={ICON_SIZE} />,
             to: COMMAND_MENU_ROUTE.automations,
+          },
+        ]
+      : []),
+    {
+      id: "github",
+      group: "navigation",
+      titleKey: I18nKey.GITHUB$PAGE_TITLE,
+      descriptionKey: I18nKey.GITHUB$PAGE_SUBTITLE,
+      icon: <FaGithub size={ICON_SIZE} />,
+      to: COMMAND_MENU_ROUTE.github,
+    },
+    ...(hasVmHarness
+      ? [
+          {
+            id: "test-vms" as const,
+            group: "navigation" as const,
+            titleKey: I18nKey.VM_HARNESS$PAGE_TITLE,
+            descriptionKey: I18nKey.VM_HARNESS$PAGE_SUBTITLE,
+            icon: <MonitorPlay size={ICON_SIZE} />,
+            to: COMMAND_MENU_ROUTE.testVms,
           },
         ]
       : []),

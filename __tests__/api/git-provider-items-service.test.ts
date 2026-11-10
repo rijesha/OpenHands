@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsClient } from "@openhands/typescript-client/clients";
 import {
   __resetActiveStoreForTests,
   setActiveSelection,
@@ -9,6 +10,7 @@ import {
   GitProviderApiError,
   GitProviderItemsService,
 } from "#/api/git-provider-items-service";
+import { SecretsService } from "#/api/secrets-service";
 import { getFetchCall, mockJsonResponse } from "./cloud/fetch-test-utils";
 
 // A cloud backend keeps provider tokens server-side, so the service never
@@ -222,6 +224,288 @@ describe("GitProviderItemsService", () => {
       });
     });
 
+    it("searches on GitHub for a text query and for items assigned to the user", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockJsonResponse({ items: [githubRow(9)] }),
+      );
+
+      const page = await GitProviderItemsService.listGithubWorkItems(
+        "acme/widgets",
+        "issue",
+        {
+          state: "open",
+          page: 1,
+          query: "flaky test",
+          involvement: "assigned",
+        },
+      );
+
+      const url = new URL(getFetchCall(fetchMock)[0] as string);
+      expect(url.pathname).toBe("/search/issues");
+      expect(url.searchParams.get("q")).toBe(
+        "repo:acme/widgets is:issue state:open assignee:@me flaky test",
+      );
+      expect(page.items.map((item) => item.number)).toEqual([9]);
+    });
+
+    it("loads a pull request's checks with the worst state first, and approval-gated runs distinct", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockJsonResponse({
+          check_runs: [
+            { name: "lint", status: "completed", conclusion: "success" },
+            { name: "e2e", status: "completed", conclusion: "action_required" },
+            { name: "unit", status: "completed", conclusion: "failure" },
+            { name: "build", status: "in_progress" },
+          ],
+        }),
+      );
+
+      const summary = await GitProviderItemsService.getGithubChecks(
+        "acme/widgets",
+        "abc123",
+      );
+
+      expect(getFetchCall(fetchMock)[0]).toContain(
+        "/commits/abc123/check-runs",
+      );
+      expect(summary.state).toBe("failure");
+      expect(summary.checks.map((c) => [c.name, c.state])).toEqual([
+        ["unit", "failure"],
+        ["e2e", "action_required"],
+        ["build", "pending"],
+        ["lint", "success"],
+      ]);
+    });
+
+    it("merges comments, reviews and line comments in time order and drops empty comment-only reviews", async () => {
+      fetchMock
+        .mockResolvedValueOnce(
+          mockJsonResponse([
+            {
+              id: 1,
+              body: "first",
+              created_at: "2026-09-01T10:00:00Z",
+              user: { login: "a" },
+            },
+          ]),
+        )
+        .mockResolvedValueOnce(
+          mockJsonResponse([
+            {
+              id: 2,
+              body: "",
+              state: "COMMENTED",
+              submitted_at: "2026-09-01T11:00:00Z",
+            },
+            {
+              id: 3,
+              body: "needs work",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-09-01T12:00:00Z",
+              user: { login: "b" },
+            },
+          ]),
+        )
+        .mockResolvedValueOnce(
+          mockJsonResponse([
+            {
+              id: 4,
+              body: "nit",
+              path: "src/a.ts",
+              created_at: "2026-09-01T11:30:00Z",
+              user: { login: "b" },
+            },
+          ]),
+        );
+
+      const entries = await GitProviderItemsService.getGithubDiscussion(
+        "acme/widgets",
+        "pull_request",
+        7,
+      );
+
+      expect(entries.map((e) => [e.type, e.body])).toEqual([
+        ["comment", "first"],
+        ["line_comment", "nit"],
+        ["review", "needs work"],
+      ]);
+      expect(entries[2].reviewState).toBe("CHANGES_REQUESTED");
+      expect(entries[1].path).toBe("src/a.ts");
+    });
+
+    it("submits a review with the chosen verdict and comments on diff lines", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockJsonResponse({
+          html_url: "https://github.com/acme/widgets/pull/7#r1",
+        }),
+      );
+
+      const localBackend: Backend = {
+        id: "local",
+        name: "Local",
+        host: "http://localhost:8000",
+        apiKey: "",
+        kind: "local",
+      };
+      setRegisteredBackends([localBackend]);
+      setActiveSelection({ backendId: localBackend.id });
+      vi.spyOn(SecretsService, "getSecrets").mockResolvedValue([
+        { name: "GITHUB_PERSONAL_ACCESS_TOKEN" },
+      ]);
+      vi.spyOn(SettingsClient.prototype, "getSecret").mockResolvedValue("pat");
+
+      await GitProviderItemsService.postGithubReview(
+        "acme/widgets",
+        7,
+        "Two issues",
+        {
+          event: "REQUEST_CHANGES",
+          comments: [{ path: "src/a.ts", line: 12, body: "Null check" }],
+        },
+      );
+
+      const init = getFetchCall(fetchMock)[1] as { body: string };
+      expect(JSON.parse(init.body)).toEqual({
+        body: "Two issues",
+        event: "REQUEST_CHANGES",
+        comments: [
+          { path: "src/a.ts", line: 12, side: "RIGHT", body: "Null check" },
+        ],
+      });
+    });
+
+    describe("writes", () => {
+      beforeEach(() => {
+        const localBackend: Backend = {
+          id: "local",
+          name: "Local",
+          host: "http://localhost:8000",
+          apiKey: "",
+          kind: "local",
+        };
+        setRegisteredBackends([localBackend]);
+        setActiveSelection({ backendId: localBackend.id });
+        vi.spyOn(SecretsService, "getSecrets").mockResolvedValue([
+          { name: "GITHUB_PERSONAL_ACCESS_TOKEN" },
+        ]);
+        vi.spyOn(SettingsClient.prototype, "getSecret").mockResolvedValue(
+          "pat",
+        );
+      });
+
+      it("merges with the chosen method and the commit that was shown", async () => {
+        fetchMock.mockResolvedValueOnce(mockJsonResponse({ merged: true }));
+
+        await GitProviderItemsService.mergeGithubPullRequest(
+          "acme/widgets",
+          7,
+          {
+            method: "squash",
+            sha: "abc123",
+          },
+        );
+
+        const [url, init] = getFetchCall(fetchMock);
+        expect(url).toBe(
+          "https://api.github.com/repos/acme/widgets/pulls/7/merge",
+        );
+        expect(init.method).toBe("PUT");
+        expect(JSON.parse(init.body as string)).toEqual({
+          merge_method: "squash",
+          sha: "abc123",
+        });
+      });
+
+      it("reports GitHub's refusal of a merge by status", async () => {
+        fetchMock.mockResolvedValueOnce(
+          mockJsonResponse({ message: "x" }, 405),
+        );
+
+        await expect(
+          GitProviderItemsService.mergeGithubPullRequest("acme/widgets", 7, {
+            method: "merge",
+          }),
+        ).rejects.toMatchObject({ status: 405 });
+      });
+
+      it("lists workflow runs, telling a run waiting for approval from a failure", async () => {
+        fetchMock.mockResolvedValueOnce(
+          mockJsonResponse({
+            workflow_runs: [
+              {
+                id: 1,
+                name: "CI",
+                status: "completed",
+                conclusion: "action_required",
+              },
+              {
+                id: 2,
+                name: "Lint",
+                status: "completed",
+                conclusion: "failure",
+              },
+              { id: 3, name: "Docs", status: "in_progress", conclusion: null },
+            ],
+          }),
+        );
+
+        const runs = await GitProviderItemsService.getGithubWorkflowRuns(
+          "acme/widgets",
+          "abc123",
+        );
+
+        expect(getFetchCall(fetchMock)[0]).toContain(
+          "/actions/runs?head_sha=abc123",
+        );
+        expect(
+          runs.map((r) => [r.id, r.needsApproval, r.failed, r.running]),
+        ).toEqual([
+          [1, true, false, false],
+          [2, false, true, false],
+          [3, false, false, true],
+        ]);
+      });
+
+      it("approves and re-runs workflow runs, accepting GitHub's empty answers", async () => {
+        fetchMock
+          .mockResolvedValueOnce(new Response(null, { status: 204 }))
+          .mockResolvedValueOnce(new Response(null, { status: 201 }))
+          .mockResolvedValueOnce(new Response(null, { status: 201 }));
+
+        await GitProviderItemsService.approveGithubWorkflowRun(
+          "acme/widgets",
+          11,
+        );
+        await GitProviderItemsService.rerunGithubWorkflowRun(
+          "acme/widgets",
+          12,
+          false,
+        );
+        await GitProviderItemsService.rerunGithubWorkflowRun(
+          "acme/widgets",
+          13,
+          true,
+        );
+
+        expect(
+          fetchMock.mock.calls.map(([url, init]) => [url, init.method]),
+        ).toEqual([
+          [
+            "https://api.github.com/repos/acme/widgets/actions/runs/11/approve",
+            "POST",
+          ],
+          [
+            "https://api.github.com/repos/acme/widgets/actions/runs/12/rerun",
+            "POST",
+          ],
+          [
+            "https://api.github.com/repos/acme/widgets/actions/runs/13/rerun-failed-jobs",
+            "POST",
+          ],
+        ]);
+      });
+    });
+
     it("rejects with the HTTP status GitHub answered", async () => {
       fetchMock.mockResolvedValueOnce(
         mockJsonResponse({ message: "Not Found" }, 404),
@@ -235,6 +519,36 @@ describe("GitProviderItemsService", () => {
 
       await expect(request).rejects.toBeInstanceOf(GitProviderApiError);
       await expect(request).rejects.toMatchObject({ status: 404 });
+    });
+
+    it("authenticates with a GITHUB_PERSONAL_ACCESS_TOKEN secret on a local backend", async () => {
+      const localBackend: Backend = {
+        id: "local",
+        name: "Local",
+        host: "http://localhost:8000",
+        apiKey: "",
+        kind: "local",
+      };
+      setRegisteredBackends([localBackend]);
+      setActiveSelection({ backendId: localBackend.id });
+      vi.spyOn(SecretsService, "getSecrets").mockResolvedValue([
+        { name: "GITHUB_PERSONAL_ACCESS_TOKEN" },
+      ]);
+      vi.spyOn(SettingsClient.prototype, "getSecret").mockResolvedValue(
+        "pat-value",
+      );
+      fetchMock.mockResolvedValueOnce(mockJsonResponse(githubRow(7)));
+
+      await GitProviderItemsService.getGithubWorkItem(
+        "acme/private",
+        "issue",
+        7,
+      );
+
+      const [, init] = getFetchCall(fetchMock);
+      expect(new Headers(init.headers).get("Authorization")).toBe(
+        "Bearer pat-value",
+      );
     });
   });
 });

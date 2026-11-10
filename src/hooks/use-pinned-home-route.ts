@@ -16,6 +16,13 @@ export const PINNED_HOME_ROUTE_KEY = "oh:pinned-home-route";
 export const CUSTOMIZE_PATH = "/customize";
 
 /**
+ * Built-in pages that work on any backend: the GitHub page explains what it
+ * needs, and Test VMs shows its own unavailable card when the backend runs no
+ * VM harness, so a stale pin cannot strand the user.
+ */
+const PINNABLE_PAGES: readonly string[] = ["/github", "/test-vms"];
+
+/**
  * The pin is stored per backend + org: it may reference a surface that only
  * exists on the backend that set it (e.g. /automations requires that
  * deployment's interface manifest) — a shared key would let one backend
@@ -38,6 +45,7 @@ export function getPinnedHomeRouteKey(
  */
 export function isPinnableRoute(path: string): boolean {
   if (path === CUSTOMIZE_PATH) return true;
+  if (PINNABLE_PAGES.includes(path)) return true;
   if (path === automationListPath()) return hasAutomationInterface();
   return false;
 }

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   getActionContent: vi.fn(),
   getObservationContent: vi.fn(),
   getACPToolCallContent: vi.fn(),
+  getACPToolCallImageUrls: vi.fn<() => string[]>(),
   getACPToolCallTitleKey: vi.fn(),
   stripRedundantTitlePrefix: vi.fn(),
   resolveVisualizerBody: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("./get-observation-content", () => ({
 
 vi.mock("./get-acp-tool-call-content", () => ({
   getACPToolCallContent: mocks.getACPToolCallContent,
+  getACPToolCallImageUrls: mocks.getACPToolCallImageUrls,
   getACPToolCallTitleKey: mocks.getACPToolCallTitleKey,
   stripRedundantTitlePrefix: mocks.stripRedundantTitlePrefix,
 }));
@@ -180,6 +182,7 @@ beforeEach(() => {
   mocks.getActionContent.mockReturnValue("action details");
   mocks.getObservationContent.mockReturnValue("observation details");
   mocks.resolveVisualizerBody.mockReturnValue(null);
+  mocks.getACPToolCallImageUrls.mockReturnValue([]);
 });
 
 describe("getEventContent detail routing", () => {
@@ -284,6 +287,24 @@ describe("getEventContent detail routing", () => {
     expect(mocks.getACPToolCallTitleKey).toHaveBeenCalledWith(event);
     expect(mocks.stripRedundantTitlePrefix).toHaveBeenCalledWith(event);
     expect(mocks.getACPToolCallContent).toHaveBeenCalledWith(event);
+  });
+
+  it("shows the images of an ACP tool call next to its text", () => {
+    const event = createACPEvent();
+    mocks.getACPToolCallTitleKey.mockReturnValue("ACTION_MESSAGE$ACP_TOOL");
+    mocks.stripRedundantTitlePrefix.mockReturnValue("screenshot");
+    mocks.getACPToolCallContent.mockReturnValue("saved: 001.png");
+    mocks.getACPToolCallImageUrls.mockReturnValue([
+      "data:image/png;base64,QUJD",
+    ]);
+
+    const { details } = getEventContent(event);
+
+    if (!isValidElement<{ text: string; imageUrls: string[] }>(details)) {
+      throw new Error("expected an element");
+    }
+    expect(details.props.text).toBe("saved: 001.png");
+    expect(details.props.imageUrls).toEqual(["data:image/png;base64,QUJD"]);
   });
 });
 
@@ -1046,6 +1067,40 @@ describe("client tool observation dispatch", () => {
     expect(getEventContent(event, action)).toEqual({
       title: "CLIENTTOOL",
       details: "observation details",
+    });
+  });
+});
+
+describe("getEventContent: MCP tool results with images", () => {
+  const mcpEvent = (content: unknown[]) =>
+    createObservationEvent(
+      observationOf("MCPToolObservation", {
+        content,
+        is_error: false,
+        tool_name: "desktop_screenshot",
+      }),
+    );
+
+  it("keeps text-only results as markdown", () => {
+    const { details } = getEventContent(
+      mcpEvent([{ type: "text", text: "clicked" }]),
+    );
+    expect(typeof details).toBe("string");
+  });
+
+  it("returns a component carrying the images when the tool returned some", () => {
+    const { details } = getEventContent(
+      mcpEvent([
+        { type: "text", text: "saved: shot.png" },
+        { type: "image", image_urls: ["data:image/png;base64,AAAA"] },
+      ]),
+    );
+    expect(isValidElement(details)).toBe(true);
+    expect(details).toMatchObject({
+      props: {
+        imageUrls: ["data:image/png;base64,AAAA"],
+        label: "desktop_screenshot",
+      },
     });
   });
 });

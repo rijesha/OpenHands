@@ -29,6 +29,15 @@ describe("getMobileTopBarState", () => {
     });
   });
 
+  it("backs from a Test VMs run to the Test VMs page", () => {
+    expect(getMobileTopBarState("/test-vms")).toEqual({ mode: "menu" });
+    expect(getMobileTopBarState("/test-vms/runs/l000001")).toEqual({
+      mode: "back",
+      backTo: "/test-vms",
+      backLabelKey: I18nKey.VM_HARNESS$PAGE_TITLE,
+    });
+  });
+
   it("backs from the apps management page but not extension pages", () => {
     expect(getMobileTopBarState("/apps")).toEqual({
       mode: "back",

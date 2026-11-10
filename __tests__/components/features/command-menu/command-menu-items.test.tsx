@@ -84,6 +84,7 @@ describe("the command menu settings group", () => {
     expect(items.map((item) => item.id)).toEqual([
       "new-chat",
       "customize",
+      "github",
       "mcp",
       "settings",
       "app-settings",

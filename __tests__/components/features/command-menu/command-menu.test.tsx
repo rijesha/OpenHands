@@ -480,7 +480,7 @@ describe("CommandMenu", () => {
       name: SEARCH_LABEL_KEY,
     });
     expect(reopenedInput).toHaveValue("");
-    expect(screen.getAllByRole("option")).toHaveLength(14);
+    expect(screen.getAllByRole("option")).toHaveLength(15);
     expect(screen.getAllByRole("option")[0]).toHaveAttribute(
       "aria-selected",
       "true",
@@ -632,6 +632,9 @@ describe("CommandMenu", () => {
     }));
     const { CommandMenu: ServerCommandMenu } =
       await import("#/components/features/command-menu/command-menu");
+    // The menu asks whether the backend runs the VM harness, which is a query.
+    const { QueryClient, QueryClientProvider } =
+      await import("@tanstack/react-query");
     const originalDocument = globalThis.document;
     Object.defineProperty(globalThis, "document", {
       configurable: true,
@@ -639,7 +642,13 @@ describe("CommandMenu", () => {
     });
 
     try {
-      expect(renderToStaticMarkup(<ServerCommandMenu />)).toBe("");
+      expect(
+        renderToStaticMarkup(
+          <QueryClientProvider client={new QueryClient()}>
+            <ServerCommandMenu />
+          </QueryClientProvider>,
+        ),
+      ).toBe("");
     } finally {
       Object.defineProperty(globalThis, "document", {
         configurable: true,

@@ -20,7 +20,15 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { server as mswServer } from "#/mocks/node";
 import {
   buildAgentServerAutomationEnv,
@@ -40,6 +48,7 @@ import {
   resolveAutomationKvSecret,
   setServiceLogListener,
   spawnService,
+  superviseOptionalService,
   superviseService,
   validateLocalAutomationPath,
   DEFAULT_AUTOMATION_REPO,
@@ -412,6 +421,8 @@ describe("buildConfig", () => {
       OH_CANVAS_SAFE_BACKEND_PORT: "19900",
       OH_CANVAS_SAFE_AUTOMATION_PORT: "19901",
       OH_CANVAS_SAFE_VITE_PORT: "19903",
+      // The harness auto-starts on Windows; keep these tests independent of the host.
+      OH_VM_HARNESS: "0",
       ...extra,
     };
   }
@@ -822,6 +833,7 @@ describe("stack mode routing", () => {
       OH_CANVAS_SAFE_BACKEND_PORT: "19800",
       OH_CANVAS_SAFE_AUTOMATION_PORT: "19801",
       OH_CANVAS_SAFE_VITE_PORT: "19803",
+      OH_VM_HARNESS: "0",
       ...extra,
     };
   }
@@ -1971,5 +1983,72 @@ describe("buildMarsWebEnv", () => {
         marsWebBridge: false,
       } as never),
     ).toEqual({ MARS_WEB: "0" });
+  });
+});
+
+describe("GUI VM harness launcher wiring", () => {
+  const base = {
+    mode: "agent-canvas",
+    agentServerPort: 18000,
+    ingressPort: 8000,
+    vitePort: 3001,
+    autoBackendPort: 18001,
+    vmHarnessPort: 18010,
+    stateDir: "/state",
+    launchFrontend: true,
+    launchAgentServer: true,
+    launchAutomation: true,
+  };
+
+  it("routes /api/vm-harness to the harness ahead of the agent-server /api", () => {
+    const routes = getLocalServiceRoutes({ ...base, launchVmHarness: true });
+    expect(Object.fromEntries(routes)["/api/vm-harness"]).toBe(
+      "http://127.0.0.1:18010",
+    );
+    expect(getLocalServiceRoutes(base).map(([prefix]) => prefix)).not.toContain(
+      "/api/vm-harness",
+    );
+  });
+
+  it("answers 503 for the harness prefix when it is not running", () => {
+    expect(getRejectPrefixes(base)).toContain("/api/vm-harness");
+    expect(getRejectPrefixes({ ...base, launchVmHarness: true })).not.toContain(
+      "/api/vm-harness",
+    );
+  });
+
+  it("advertises the plugin path to the agent only while the harness runs", () => {
+    const on = buildAutomationRuntimeServicesInfo(
+      { ...base, launchVmHarness: true },
+      {},
+    ) as { services: Record<string, { plugin_path?: string }> };
+    expect(on.services.vm_harness.plugin_path).toContain("vm-harness");
+    const off = buildAutomationRuntimeServicesInfo(base, {}) as {
+      services: Record<string, unknown>;
+    };
+    expect(off.services.vm_harness).toBeUndefined();
+  });
+
+  it("restarts an optional service a few times, then leaves it down without failing the stack", () => {
+    vi.useFakeTimers();
+    try {
+      const exits: Array<(reason: string) => void> = [];
+      const start = vi.fn(
+        ({ onUnexpectedExit }: { onUnexpectedExit: (r: string) => void }) => {
+          exits.push(onUnexpectedExit);
+        },
+      );
+      superviseOptionalService("vm-harness", start, {
+        maxRestarts: 2,
+        restartDelayMs: 10,
+      });
+      for (let i = 0; i < 3; i += 1) {
+        exits[i]("code 1");
+        vi.advanceTimersByTime(20);
+      }
+      expect(start).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

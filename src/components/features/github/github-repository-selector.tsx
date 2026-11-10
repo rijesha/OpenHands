@@ -1,17 +1,16 @@
 import React from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { GitRepoDropdown } from "#/components/features/home/git-repo-dropdown";
 import { BrandButton } from "#/components/features/settings/brand-button";
 import { GitProviderIcon } from "#/components/shared/git-provider-icon";
 import { useUserProviders } from "#/hooks/use-user-providers";
 import { I18nKey } from "#/i18n/declaration";
+import { useGithubRecentRepositoriesStore } from "#/stores/github-recent-repositories-store";
 import { useHomeStore } from "#/stores/home-store";
 import { formControlFieldClassName } from "#/utils/form-control-classes";
 import { parseGithubRepository } from "#/utils/parse-github-repository";
 import { cn, constructRepositoryUrl } from "#/utils/utils";
-
-const MAX_RECENT_REPOSITORIES = 5;
 
 function GithubRepositoryInput({
   onSubmit,
@@ -80,16 +79,56 @@ export function GithubRepositorySelector({
 }: GithubRepositorySelectorProps) {
   const { t } = useTranslation("openhands");
   const { providers } = useUserProviders();
-  const { recentRepositories, addRecentRepository } = useHomeStore();
+  const { addRecentRepository } = useHomeStore();
+  const { repositories, remember, forget } = useGithubRecentRepositoriesStore();
   const [isEditing, setIsEditing] = React.useState(false);
   const isGithubConnected = providers.includes("github");
 
-  const recentGithubRepositories = recentRepositories
-    .filter(
-      (recent) =>
-        recent.git_provider === "github" && recent.full_name !== repository,
-    )
-    .slice(0, MAX_RECENT_REPOSITORIES);
+  // Whatever opens the page on a repository (typed name, picker, shared link)
+  // joins the shortlist.
+  React.useEffect(() => {
+    if (repository) remember(repository);
+  }, [repository, remember]);
+
+  const shortlist = repositories.filter(
+    (recent) => recent.toLowerCase() !== repository?.toLowerCase(),
+  );
+
+  const recentChips =
+    shortlist.length > 0 ? (
+      <ul
+        data-testid="github-recent-repositories"
+        aria-label={t(I18nKey.GITHUB$RECENT_REPOSITORIES)}
+        className="flex flex-wrap gap-2"
+      >
+        {shortlist.map((recent) => (
+          <li
+            key={recent}
+            className="flex items-center rounded-full border border-border text-xs text-muted"
+          >
+            <button
+              type="button"
+              data-testid={`github-recent-repository-${recent}`}
+              onClick={() => select(recent)}
+              className="rounded-l-full py-1 pl-2.5 pr-1.5 transition-colors hover:bg-interactive-hover hover:text-contrast"
+            >
+              {recent}
+            </button>
+            <button
+              type="button"
+              data-testid={`github-forget-repository-${recent}`}
+              aria-label={t(I18nKey.GITHUB$FORGET_REPOSITORY, {
+                repository: recent,
+              })}
+              onClick={() => forget(recent)}
+              className="rounded-r-full py-1 pl-1 pr-2 transition-colors hover:bg-interactive-hover hover:text-contrast"
+            >
+              <X className="size-3" aria-hidden />
+            </button>
+          </li>
+        ))}
+      </ul>
+    ) : null;
 
   const select = (next: string) => {
     setIsEditing(false);
@@ -98,28 +137,34 @@ export function GithubRepositorySelector({
 
   if (repository && !isEditing) {
     return (
-      <div
-        data-testid="github-repository-current"
-        className="flex flex-wrap items-center gap-3"
-      >
-        <a
-          href={constructRepositoryUrl("github", repository)}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex min-w-0 items-center gap-2 text-base font-medium text-contrast hover:underline"
+      <div className="flex flex-col gap-2">
+        <div
+          data-testid="github-repository-current"
+          className="flex flex-wrap items-center gap-3"
         >
-          <GitProviderIcon gitProvider="github" />
-          <span className="truncate">{repository}</span>
-          <ExternalLink className="size-3.5 shrink-0 text-muted" aria-hidden />
-        </a>
-        <BrandButton
-          type="button"
-          variant="secondary"
-          testId="github-repository-change"
-          onClick={() => setIsEditing(true)}
-        >
-          {t(I18nKey.GITHUB$CHANGE_REPOSITORY)}
-        </BrandButton>
+          <a
+            href={constructRepositoryUrl("github", repository)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-w-0 items-center gap-2 text-base font-medium text-contrast hover:underline"
+          >
+            <GitProviderIcon gitProvider="github" />
+            <span className="truncate">{repository}</span>
+            <ExternalLink
+              className="size-3.5 shrink-0 text-muted"
+              aria-hidden
+            />
+          </a>
+          <BrandButton
+            type="button"
+            variant="secondary"
+            testId="github-repository-change"
+            onClick={() => setIsEditing(true)}
+          >
+            {t(I18nKey.GITHUB$CHANGE_REPOSITORY)}
+          </BrandButton>
+        </div>
+        {recentChips}
       </div>
     );
   }
@@ -151,22 +196,7 @@ export function GithubRepositorySelector({
           <p className="text-xs text-muted">{t(I18nKey.GITHUB$CONNECT_HINT)}</p>
         </>
       )}
-      {recentGithubRepositories.length > 0 ? (
-        <ul className="flex flex-wrap gap-2">
-          {recentGithubRepositories.map((recent) => (
-            <li key={recent.id}>
-              <button
-                type="button"
-                data-testid={`github-recent-repository-${recent.full_name}`}
-                onClick={() => select(recent.full_name)}
-                className="rounded-full border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:bg-interactive-hover hover:text-contrast"
-              >
-                {recent.full_name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {recentChips}
       {repository && isEditing ? (
         <BrandButton
           type="button"

@@ -42,6 +42,25 @@ let mockImages: File[] = [];
 let mockFiles: File[] = [];
 let mockIsolated = false;
 
+const serverInfoOverride = vi.hoisted(() => ({
+  value: undefined as unknown,
+}));
+
+// Only the harness probe is faked: server_info stays real unless a test sets it.
+vi.mock("#/api/conversation-workspace", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("#/api/conversation-workspace")>();
+  return {
+    ...actual,
+    getConversationServerInfo: (
+      ...args: Parameters<typeof actual.getConversationServerInfo>
+    ) =>
+      serverInfoOverride.value === undefined
+        ? actual.getConversationServerInfo(...args)
+        : Promise.resolve(serverInfoOverride.value),
+  };
+});
+
 vi.mock("#/utils/send-message-with-attachments", () => ({
   sendMessageWithAttachments: (...args: unknown[]) =>
     sendMessageWithAttachments(...args),
@@ -399,6 +418,7 @@ describe("HomeChatLauncher", () => {
     mockImages = [];
     mockFiles = [];
     mockIsolated = false;
+    serverInfoOverride.value = undefined;
     mockUseActiveBackend.mockReturnValue(localBackend);
     mockUseLlmConfigured.mockReturnValue({
       isConfigured: true,
@@ -582,6 +602,64 @@ describe("HomeChatLauncher", () => {
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith("/conversations/conv-abc"),
     );
+  });
+
+  describe("GUI VM test environment", () => {
+    const withHarness = () => {
+      serverInfoOverride.value = {
+        runtime_services: {
+          services: { vm_harness: { plugin_path: "/state/vm-harness/plugin" } },
+        },
+      };
+    };
+
+    it("offers no test environment when the backend runs no VM harness", async () => {
+      serverInfoOverride.value = {};
+      renderLauncher();
+
+      await screen.findByTestId("stub-chat-submit");
+      expect(screen.queryByTestId("test-environment-select")).toBeNull();
+    });
+
+    it("attaches the harness plugin and the VM instruction to the first message", async () => {
+      withHarness();
+      const createSpy = vi
+        .spyOn(AgentServerConversationService, "createConversation")
+        .mockResolvedValue(makeConversationResponse());
+      renderLauncher();
+      const user = userEvent.setup();
+
+      await user.selectOptions(
+        await screen.findByTestId("test-environment-select"),
+        "ubuntu",
+      );
+      await user.click(screen.getByTestId("stub-chat-submit"));
+
+      await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+      const options = createSpy.mock.calls[0]?.[0];
+      expect(options?.plugins).toEqual([
+        { source: "/state/vm-harness/plugin", name: "gui-vm-testing" },
+      ]);
+      expect(options?.initialUserMsg).toContain("hello world");
+      expect(options?.initialUserMsg).toContain('image "ubuntu"');
+    });
+
+    it("sends a plain message when the default sandbox is kept", async () => {
+      withHarness();
+      const createSpy = vi
+        .spyOn(AgentServerConversationService, "createConversation")
+        .mockResolvedValue(makeConversationResponse());
+      renderLauncher();
+      const user = userEvent.setup();
+
+      await screen.findByTestId("test-environment-select");
+      await user.click(screen.getByTestId("stub-chat-submit"));
+
+      await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+      const options = createSpy.mock.calls[0]?.[0];
+      expect(options?.plugins).toBeUndefined();
+      expect(options?.initialUserMsg).toBe("hello world");
+    });
   });
 
   it("disables the chat input and won't create a conversation when no LLM is configured", async () => {

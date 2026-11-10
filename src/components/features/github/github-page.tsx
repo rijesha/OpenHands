@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type {
+  GithubInvolvement,
   GithubWorkItem,
   GithubWorkItemKind,
   GithubWorkItemStateFilter,
@@ -29,6 +30,18 @@ const STATE_FILTERS: ReadonlyArray<{
   { state: "all", label: I18nKey.GITHUB$STATE_ALL },
 ];
 
+const INVOLVEMENTS: ReadonlyArray<{
+  value: GithubInvolvement;
+  label: I18nKey;
+}> = [
+  { value: "all", label: I18nKey.GITHUB$INVOLVEMENT_ALL },
+  { value: "assigned", label: I18nKey.GITHUB$INVOLVEMENT_ASSIGNED },
+  {
+    value: "review_requested",
+    label: I18nKey.GITHUB$INVOLVEMENT_REVIEW_REQUESTED,
+  },
+];
+
 /** Matches loaded rows by title, label, or `#123` / `123`. */
 function matchesFilter(item: GithubWorkItem, filter: string): boolean {
   const query = filter.trim().toLowerCase();
@@ -49,6 +62,8 @@ export interface GithubPageProps {
   onKindChange: (kind: GithubWorkItemKind) => void;
   onStateChange: (state: GithubWorkItemStateFilter) => void;
   onSelectItem: (number: number | null) => void;
+  /** Opens an item of the current repository, switching to its tab if needed. */
+  onOpenItem: (kind: GithubWorkItemKind, number: number) => void;
 }
 
 export function GithubPage({
@@ -60,18 +75,31 @@ export function GithubPage({
   onKindChange,
   onStateChange,
   onSelectItem,
+  onOpenItem,
 }: GithubPageProps) {
   const { t } = useTranslation("openhands");
   const [filter, setFilter] = React.useState("");
-  const query = useGithubWorkItems(repository, kind, state);
+  // Typing filters the loaded rows at once; Enter asks GitHub to search.
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [involvement, setInvolvement] =
+    React.useState<GithubInvolvement>("all");
+  // "Review requested" only exists for pull requests.
+  const effectiveInvolvement =
+    kind === "issue" && involvement === "review_requested"
+      ? "all"
+      : involvement;
+  const query = useGithubWorkItems(repository, kind, state, {
+    search: searchQuery,
+    involvement: effectiveInvolvement,
+  });
 
-  const items = React.useMemo(
-    () =>
-      (query.data?.pages.flatMap((page) => page.items) ?? []).filter((item) =>
-        matchesFilter(item, filter),
-      ),
-    [query.data, filter],
-  );
+  const items = React.useMemo(() => {
+    const rows = query.data?.pages.flatMap((page) => page.items) ?? [];
+    // GitHub already matched a search; the local filter would hide hits found in the body.
+    return searchQuery
+      ? rows
+      : rows.filter((item) => matchesFilter(item, filter));
+  }, [query.data, filter, searchQuery]);
 
   return (
     <div
@@ -92,6 +120,7 @@ export function GithubPage({
           repository={repository}
           onChange={(next) => {
             setFilter("");
+            setSearchQuery("");
             onRepositoryChange(next);
           }}
         />
@@ -159,6 +188,25 @@ export function GithubPage({
                       </button>
                     ))}
                   </div>
+                  <select
+                    aria-label={t(I18nKey.GITHUB$INVOLVEMENT_LABEL)}
+                    data-testid="github-involvement"
+                    value={effectiveInvolvement}
+                    onChange={(event) =>
+                      setInvolvement(event.target.value as GithubInvolvement)
+                    }
+                    className="h-8 rounded-lg border border-border bg-base-secondary px-2 text-xs text-contrast"
+                  >
+                    {INVOLVEMENTS.filter(
+                      (option) =>
+                        kind === "pull_request" ||
+                        option.value !== "review_requested",
+                    ).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.label)}
+                      </option>
+                    ))}
+                  </select>
                   <div className="relative flex h-8 min-w-40 flex-1 items-center rounded-lg border border-border bg-base-secondary focus-within:border-contrast/40">
                     <SearchIcon
                       className="ml-2.5 size-3.5 shrink-0 text-tertiary-alt"
@@ -167,7 +215,16 @@ export function GithubPage({
                     <input
                       type="search"
                       value={filter}
-                      onChange={(event) => setFilter(event.target.value)}
+                      onChange={(event) => {
+                        setFilter(event.target.value);
+                        if (!event.target.value) setSearchQuery("");
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          setSearchQuery(filter.trim());
+                        }
+                      }}
                       data-testid="github-work-items-filter"
                       placeholder={t(I18nKey.GITHUB$FILTER_PLACEHOLDER)}
                       aria-label={t(I18nKey.GITHUB$FILTER_PLACEHOLDER)}
@@ -183,6 +240,7 @@ export function GithubPage({
                 className="min-h-0 flex-1 overflow-y-auto custom-scrollbar"
               >
                 <GithubWorkItemList
+                  repository={repository}
                   items={items}
                   selectedNumber={selectedNumber}
                   onSelect={onSelectItem}
@@ -211,6 +269,7 @@ export function GithubPage({
                   kind={kind}
                   number={selectedNumber}
                   onBack={() => onSelectItem(null)}
+                  onOpenItem={onOpenItem}
                 />
               ) : (
                 <p
