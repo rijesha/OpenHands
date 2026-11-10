@@ -67,14 +67,15 @@ export function rootPaths(root) {
  *                        (e.g. D:/zide-ai-qa) to reuse its images/, secrets/ and vms/ folders.
  * VM_HARNESS_PORT        listen port (default 18010; always bound to 127.0.0.1)
  * VM_HARNESS_WORKSPACE_ROOTS  path-delimited allow-list for vm_put_file
- * VM_HARNESS_MAX_VMS     concurrent leases (default 2)
+ * VM_HARNESS_MAX_VMS     concurrent leases (default 2; 1 on macOS)
  * VM_HARNESS_LEASE_TTL_MIN  idle minutes before a lease is reaped (default 90)
  * VM_HARNESS_MEMORY_MB / VM_HARNESS_CPUS  per-VM sizing (defaults 6144 / 4)
- * VM_HARNESS_MEMORY_MB_UBUNTU  memory for Ubuntu guests (default 4096)
+ * VM_HARNESS_MEMORY_MB_UBUNTU  memory for Ubuntu guests (default 4096; 3072 on macOS hosts)
+ * VM_HARNESS_MEMORY_MB_MACOS   memory for macOS guests (default 4096)
  *
  * @param {NodeJS.ProcessEnv} [env]
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, platform = process.platform) {
   const saved = readSettings(env).root;
   const rootSource = saved
     ? "settings"
@@ -99,11 +100,16 @@ export function loadConfig(env = process.env) {
     port: Number(env.VM_HARNESS_PORT) || DEFAULT_PORT,
     apiKey: resolveApiKey(env),
     workspaceRoots,
-    maxVms: Number(env.VM_HARNESS_MAX_VMS) || 2,
+    // A Mac shares its (unified) memory with the host, so UTM hosts default to one VM at a time.
+    maxVms: Number(env.VM_HARNESS_MAX_VMS) || (platform === "darwin" ? 1 : 2),
     leaseTtlMs: (Number(env.VM_HARNESS_LEASE_TTL_MIN) || 90) * 60_000,
     memoryMB: Number(env.VM_HARNESS_MEMORY_MB) || 6144,
     // A Linux desktop with VS Code needs less than a Windows one; an image manifest's own memoryMB wins over both.
-    memoryMBUbuntu: Number(env.VM_HARNESS_MEMORY_MB_UBUNTU) || 4096,
+    // On a Mac the guests share unified memory with the host (often a NAS and Docker too): smaller defaults there.
+    memoryMBUbuntu:
+      Number(env.VM_HARNESS_MEMORY_MB_UBUNTU) ||
+      (platform === "darwin" ? 3072 : 4096),
+    memoryMBMacos: Number(env.VM_HARNESS_MEMORY_MB_MACOS) || 4096,
     cpus: Number(env.VM_HARNESS_CPUS) || 4,
   };
 }

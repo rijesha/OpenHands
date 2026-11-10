@@ -95,10 +95,12 @@ async function startHarness() {
     }),
     listOrphans: vi.fn(async () => provider.orphans),
     state: vi.fn(async () => "Off"),
-    snapshot: vi.fn(async (_vm: { name: string }, dest: string) => {
-      fs.writeFileSync(dest, "disk");
-      return { vhdx: dest, sizeBytes: 4 };
-    }),
+    snapshot: vi.fn(
+      async (_vm: { name: string }, target: { vhdxPath: string }) => {
+        fs.writeFileSync(target.vhdxPath, "disk");
+        return { vhdxPath: target.vhdxPath, sizeBytes: 4 };
+      },
+    ),
     desktop: () => ({
       screenSize: () => ({ width: 1280, height: 800 }),
       screenshot: async () => ({

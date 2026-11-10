@@ -21,13 +21,15 @@ export function listImages(imagesDir) {
     if (!name.endsWith(".json") || name === "current.json") continue;
     try {
       const m = JSON.parse(fs.readFileSync(path.join(imagesDir, name), "utf8"));
-      if (!m.imageId || !m.os || !m.vhdxPath) continue;
+      // An image lives in a VHDX file (Hyper-V) or is a registered UTM VM (UTM).
+      if (!m.imageId || !m.os || !(m.vhdxPath || m.utmVm)) continue;
       images.push({
         imageId: m.imageId,
         os: m.os,
         kind: m.kind ?? "golden",
         user: m.user,
-        vhdxPath: m.vhdxPath,
+        ...(m.vhdxPath ? { vhdxPath: m.vhdxPath } : {}),
+        ...(m.utmVm ? { utmVm: m.utmVm, backend: m.backend } : {}),
         sshHostKeyFingerprint: m.sshHostKeyFingerprint,
         resolution: m.resolution ?? { width: 1280, height: 800 },
         memoryMB:
@@ -40,7 +42,7 @@ export function listImages(imagesDir) {
         role: roleOf.get(m.imageId) ?? null,
         parentImageId: m.parentImageId,
         preparedStage: m.preparedStage,
-        sizeBytes: m.sizeBytes ?? sizeOf(m.vhdxPath),
+        sizeBytes: m.sizeBytes ?? (m.vhdxPath ? sizeOf(m.vhdxPath) : undefined),
         manifestFile: path.join(imagesDir, name),
         description: describe(m),
       });
@@ -55,12 +57,14 @@ export function listImages(imagesDir) {
   );
 }
 
-/** The four baseline roles, in the order the GUI shows them. */
+/** The baseline roles, in the order the GUI shows them. */
 export const BASELINE_ROLES = [
   "windows",
   "windows-workspace",
   "ubuntu",
   "ubuntu-workspace",
+  "macos",
+  "macos-workspace",
 ];
 
 /** ai-qa wrote `<os>-prepared`; the harness calls the same role `<os>-workspace`. */
@@ -130,12 +134,10 @@ function sizeOf(file) {
   }
 }
 
+const OS_NAME = { windows: "Windows", ubuntu: "Ubuntu", macos: "macOS" };
+
 function describe(m) {
-  const parts = [
-    m.os === "windows"
-      ? `Windows ${m.osBuild ?? ""}`
-      : `Ubuntu ${m.osBuild ?? ""}`.trim(),
-  ];
+  const parts = [`${OS_NAME[m.os] ?? m.os} ${m.osBuild ?? ""}`.trim()];
   if (m.vscodeVersion) parts.push(`VS Code ${m.vscodeVersion}`);
   if (m.kind === "prepared")
     parts.push(`prepared (${m.preparedStage ?? "custom"})`);
@@ -214,6 +216,7 @@ export function deleteImage(config, images, id, inUseIds = []) {
     throw new Error(`Image ${id} is used by a running VM. Stop it first.`);
   let diskRemoved = false;
   if (
+    img.vhdxPath &&
     isInsideDir(img.vhdxPath, config.imagesDir) &&
     fs.existsSync(img.vhdxPath)
   ) {
@@ -226,6 +229,8 @@ export function deleteImage(config, images, id, inUseIds = []) {
     imageId: id,
     diskRemoved,
     freedBytes: diskRemoved ? (img.sizeBytes ?? 0) : 0,
+    // The caller asks the provider to delete this UTM VM (images.mjs has no provider).
+    ...(img.utmVm ? { utmVm: img.utmVm } : {}),
   };
 }
 
@@ -258,8 +263,13 @@ export function snapshotTarget(
 }
 
 /**
- * Registers a snapshot: a read-only differencing disk saved from a lease, as a "prepared" image whose parent is the
- * image the lease booted from.
+ * Registers a snapshot: a disk saved from a lease (a read-only differencing VHDX on Hyper-V, a renamed VM on UTM), as a
+ * "prepared" image whose parent is the image the lease booted from.
+ * @param {{ imagesDir: string }} config
+ * @param {Record<string, any>} parent
+ * @param {{ imageId: string, name: string, notes?: string, vhdxPath?: string, utmVm?: string, sizeBytes?: number,
+ *   kind?: string, preparedStage?: string }} snap
+ * @returns {Record<string, any>}
  */
 export function registerSnapshot(
   config,
@@ -269,6 +279,7 @@ export function registerSnapshot(
     name,
     notes,
     vhdxPath,
+    utmVm,
     sizeBytes,
     kind = "prepared",
     preparedStage,
@@ -279,7 +290,7 @@ export function registerSnapshot(
     os: parent.os,
     kind,
     label: String(name).slice(0, 80),
-    vhdxPath,
+    ...(utmVm ? { utmVm, backend: parent.backend } : { vhdxPath }),
     sizeBytes,
     createdAt: new Date().toISOString(),
     user: parent.user,

@@ -134,6 +134,11 @@ function ClickSurface({
         const screen = event.currentTarget.querySelector("img");
         const box = screen?.getBoundingClientRect();
         if (!box?.width || !box.height || event.detail === 0) return;
+        // The screenshot is the guest's screen at 1:1, so its pixel size is the coordinate space.
+        const natural =
+          screen?.naturalWidth && screen.naturalHeight
+            ? { width: screen.naturalWidth, height: screen.naturalHeight }
+            : undefined;
         onClick({
           type: "click",
           ...toScreenPoint(
@@ -141,6 +146,7 @@ function ClickSurface({
             event.clientY - box.top,
             box.width,
             box.height,
+            natural,
           ),
         });
       }}

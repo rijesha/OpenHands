@@ -112,11 +112,11 @@ export class LeaseManager {
 
   /** Memory a lease of this image gets: the image's own size, else the OS default, else the global default. */
   memoryFor(image) {
-    return (
-      image.memoryMB ??
-      (image.os === "ubuntu" ? this.config.memoryMBUbuntu : undefined) ??
-      this.config.memoryMB
-    );
+    const byOs = {
+      ubuntu: this.config.memoryMBUbuntu,
+      macos: this.config.memoryMBMacos,
+    };
+    return image.memoryMB ?? byOs[image.os] ?? this.config.memoryMB;
   }
 
   /**
@@ -375,11 +375,14 @@ export class LeaseManager {
       // Best effort: the VM may not have a framebuffer yet.
     }
     if (!lease.ssh) return;
-    const workspace = lease.ops?.paths.workspace ?? "C:\\zws";
+    const workspace =
+      lease.ops?.paths.workspace ?? (lease.os === "windows" ? "C:\\zws" : "~/zws");
     const cmd =
       lease.os === "windows"
         ? `Get-ScheduledTaskInfo -TaskName ZideLaunchVSCode | Format-List LastRunTime,LastTaskResult; (Get-ScheduledTask -TaskName ZideLaunchVSCode).State; query user; Get-Process Code,powershell,explorer -ErrorAction SilentlyContinue | Select-Object Name,Id,SessionId | Format-Table -AutoSize; Get-ChildItem '${workspace}' -Force | Select-Object -First 30 Name | Format-Table -HideTableHeaders`
-        : "systemctl --user list-units 'zide-vscode-*' --no-pager; loginctl list-sessions --no-pager; pgrep -a code | head -20; ls -la ~/zws | head -30";
+        : lease.os === "macos"
+          ? `who; pgrep -lf 'Finder|Dock|Visual Studio Code' | head -20; tail -20 ~/zide-run/vscode.log 2>/dev/null; ls -la ${workspace} | head -30`
+          : "systemctl --user list-units 'zide-vscode-*' --no-pager; loginctl list-sessions --no-pager; pgrep -a code | head -20; ls -la ~/zws | head -30";
     try {
       const r = await lease.ssh.exec(cmd, { timeoutMs: 20_000 });
       fs.writeFileSync(
@@ -516,7 +519,8 @@ export class LeaseManager {
     await lease.ssh?.close().catch(() => undefined);
     let saved;
     try {
-      saved = await this.provider.snapshot(lease.handle, target.vhdxPath);
+      // The provider says where the image now lives: a VHDX file (Hyper-V) or a renamed UTM VM (UTM).
+      saved = await this.provider.snapshot(lease.handle, target);
     } catch (e) {
       lease.status = "failed";
       lease.error = `snapshot failed: ${e?.message ?? e}`;
@@ -525,6 +529,7 @@ export class LeaseManager {
     }
     const manifest = registerSnapshot(this.config, parent, {
       ...target,
+      ...(saved?.utmVm ? { utmVm: saved.utmVm } : {}),
       name,
       notes,
       kind,

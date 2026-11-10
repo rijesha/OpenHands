@@ -31,6 +31,8 @@ const ROLE_LABEL: Record<BaselineRole, I18nKey> = {
   "windows-workspace": I18nKey.VM_HARNESS$ROLE_WINDOWS_WORKSPACE,
   ubuntu: I18nKey.VM_HARNESS$ROLE_UBUNTU,
   "ubuntu-workspace": I18nKey.VM_HARNESS$ROLE_UBUNTU_WORKSPACE,
+  macos: I18nKey.VM_HARNESS$ROLE_MACOS,
+  "macos-workspace": I18nKey.VM_HARNESS$ROLE_MACOS_WORKSPACE,
 };
 
 interface ImageRowProps {

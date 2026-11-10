@@ -61,7 +61,8 @@ export interface VmHarnessStatus {
   };
   maxVms?: number;
   /** Memory one VM of each OS needs. */
-  memoryMB?: { windows: number; ubuntu: number };
+  /** `macos` is only reported by harnesses that support macOS guests (UTM). */
+  memoryMB?: { windows: number; ubuntu: number; macos?: number };
   root?: string;
   rootSource?: string;
   imagesDir?: string;

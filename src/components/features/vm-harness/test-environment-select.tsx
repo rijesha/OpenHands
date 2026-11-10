@@ -19,6 +19,8 @@ const TARGET_LABEL: Record<GuiVmTarget, I18nKey> = {
   "windows-workspace": I18nKey.GITHUB$TEST_ENV_VM_WINDOWS_WORKSPACE,
   ubuntu: I18nKey.GITHUB$TEST_ENV_VM_UBUNTU,
   "ubuntu-workspace": I18nKey.GITHUB$TEST_ENV_VM_UBUNTU_WORKSPACE,
+  macos: I18nKey.GITHUB$TEST_ENV_VM_MACOS,
+  "macos-workspace": I18nKey.GITHUB$TEST_ENV_VM_MACOS_WORKSPACE,
 };
 
 interface TestEnvironmentSelectProps {

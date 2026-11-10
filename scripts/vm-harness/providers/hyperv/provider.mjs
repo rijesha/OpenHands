@@ -2,6 +2,7 @@ import path from "node:path";
 import { rgb565ToPng } from "../../desktop/rgb565.mjs";
 import { parseCombo } from "../../desktop/keys.mjs";
 import { HyperVBridge } from "./bridge.mjs";
+import { createGoldenVm, sealImage } from "../../images-admin.mjs";
 
 const SCREEN = { width: 1280, height: 800 };
 
@@ -159,17 +160,23 @@ export class HyperVProvider {
     );
   }
 
-  /** Powers the VM off, removes it and keeps its disk at `destVhdx` as a read-only child of the image it booted from. */
-  snapshot(vm, destVhdx) {
-    return this.bridge.call(
+  /**
+   * Powers the VM off, removes it and keeps its disk at `target.vhdxPath` as a read-only child of the image it booted
+   * from.
+   * @param {any} vm
+   * @param {{ vhdxPath: string }} target
+   */
+  async snapshot(vm, target) {
+    const r = await this.bridge.call(
       "Save-VmhSnapshot",
       {
         Name: vm.name,
         Dir: path.win32.resolve(vm.dir),
-        Dest: path.win32.resolve(destVhdx),
+        Dest: path.win32.resolve(target.vhdxPath),
       },
       600_000,
     );
+    return { vhdxPath: target.vhdxPath, sizeBytes: r?.sizeBytes };
   }
 
   /** VMs left behind by an earlier harness process. */
@@ -180,6 +187,16 @@ export class HyperVProvider {
 
   desktop(vm) {
     return new WmiDesktop(this.bridge, vm.vmId);
+  }
+
+  /** `images create-vm`: the empty Gen2 VM you install the OS into by hand. */
+  createGolden(config, opts) {
+    return createGoldenVm(this.bridge, config, opts);
+  }
+
+  /** `images seal`: moves the build VM's VHDX into images/ as a sealed, read-only golden image. */
+  sealGolden(config, opts) {
+    return sealImage(this.bridge, config, opts);
   }
 
   close() {

@@ -17,20 +17,23 @@ import { loadConfig } from "./config.mjs";
 import { listImages } from "./images.mjs";
 import { LeaseManager } from "./leases.mjs";
 import { renderPlugin } from "./plugin.mjs";
-import { createGoldenVm, sealImage } from "./images-admin.mjs";
 import { createServer } from "./server.mjs";
 
 const execFileP = promisify(execFile);
 const log = (m) => console.log(`[vm-harness] ${m}`);
 
-/** Picks the provider for this host. UTM (macOS) is not implemented yet. */
-export async function createProvider(config) {
-  if (process.platform === "win32") {
+/** Picks the provider for this host: Hyper-V on Windows, UTM on macOS. */
+export async function createProvider(config, platform = process.platform) {
+  if (platform === "win32") {
     const { HyperVProvider } = await import("./providers/hyperv/provider.mjs");
     return new HyperVProvider({ root: config.root });
   }
+  if (platform === "darwin") {
+    const { UtmProvider } = await import("./providers/utm/provider.mjs");
+    return new UtmProvider({ root: config.root });
+  }
   throw new Error(
-    `No VM provider for ${process.platform} yet (Hyper-V on Windows is supported; UTM on macOS is planned).`,
+    `No VM provider for ${platform} (Hyper-V on Windows and UTM on macOS are supported).`,
   );
 }
 
@@ -43,19 +46,22 @@ async function has(cmd, args = ["-V"]) {
   }
 }
 
-export async function doctor(config) {
+export async function doctor(config, platform = process.platform) {
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  const hyperv = platform === "win32";
+  const utm = platform === "darwin";
   add(
     "platform",
-    process.platform === "win32",
-    `${process.platform} (Hyper-V provider needs win32)`,
+    hyperv || utm,
+    `${platform} (Hyper-V needs win32, UTM needs darwin)`,
   );
-  add(
-    "pwsh",
-    await has("pwsh", ["-NoProfile", "-Command", "exit 0"]),
-    "PowerShell 7 on PATH",
-  );
+  if (hyperv)
+    add(
+      "pwsh",
+      await has("pwsh", ["-NoProfile", "-Command", "exit 0"]),
+      "PowerShell 7 on PATH",
+    );
   add("ssh", await has("ssh", ["-V"]), "OpenSSH client");
   add(
     "guest key",
@@ -69,15 +75,13 @@ export async function doctor(config) {
   );
   const images = listImages(config.imagesDir);
   add("images", images.length > 0, `${images.length} in ${config.imagesDir}`);
-  if (
-    process.platform === "win32" &&
-    checks.find((c) => c.name === "pwsh").ok
-  ) {
+  if ((hyperv && checks.find((c) => c.name === "pwsh").ok) || utm) {
+    const name = hyperv ? "hyper-v" : "utm";
     try {
-      const provider = await createProvider(config);
+      const provider = await createProvider(config, platform);
       const host = await provider.hostCheck();
       add(
-        "hyper-v",
+        name,
         host.ok,
         host.ok
           ? `free RAM ${host.freeRamMB} MB, free disk ${host.freeDiskGB} GB`
@@ -85,7 +89,7 @@ export async function doctor(config) {
       );
       provider.close();
     } catch (e) {
-      add("hyper-v", false, String(e.message ?? e));
+      add(name, false, String(e.message ?? e));
     }
   }
   for (const c of checks)
@@ -116,21 +120,26 @@ export async function imagesCommand(config, argv) {
       "ssh-fingerprint": { type: "string" },
       "provision-sha": { type: "string" },
       notes: { type: "string" },
+      archive: { type: "string" },
     },
   });
   const provider = await createProvider(config);
   try {
     if (sub === "create-vm") {
-      const r = await createGoldenVm(provider.bridge, config, {
+      const r = await provider.createGolden(config, {
         os: values.os,
         iso: values.iso,
         name: values.name,
       });
       console.log(
-        `Created VM ${r.name} (disk ${r.vhdx}). Install the OS by hand, then provision it with scripts/vm-harness/images/${values.os}/ (see README).`,
+        provider.id === "utm"
+          ? `Created UTM VM ${r.name}: the Ubuntu install runs unattended from the seed at ${r.seed}. Start it, wait for it to power off, then provision it (see README).`
+          : `Created VM ${r.name} (disk ${r.vhdx}). Install the OS by hand, then provision it with scripts/vm-harness/images/${values.os}/ (see README).`,
       );
+      if (r.secretsCreated?.length)
+        console.log(`New guest secrets: ${r.secretsCreated.join(", ")}`);
     } else if (sub === "seal") {
-      const m = await sealImage(provider.bridge, config, {
+      const m = await provider.sealGolden(config, {
         os: values.os,
         vmName: values.vm,
         osBuild: values["os-build"],
@@ -141,11 +150,14 @@ export async function imagesCommand(config, argv) {
         sshHostKeyFingerprint: values["ssh-fingerprint"],
         provisionScriptSha: values["provision-sha"],
         notes: values.notes,
+        archiveDir: values.archive,
       });
-      console.log(`Sealed ${m.imageId} (${m.sizeBytes} bytes)`);
+      console.log(
+        `Sealed ${m.imageId}${m.sizeBytes ? ` (${m.sizeBytes} bytes)` : ""}${m.utmVm ? ` as UTM VM ${m.utmVm}` : ""}${m.archivePath ? `, archived to ${m.archivePath}` : ""}`,
+      );
     } else {
       throw new Error(
-        "Usage: images list | create-vm --os <windows|ubuntu> --iso <file> | seal --os ... --vm ... (see README)",
+        "Usage: images list | create-vm --os <windows|ubuntu|macos> --iso <file> | seal --os ... --vm ... (see README)",
       );
     }
   } finally {

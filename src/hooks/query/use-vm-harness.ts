@@ -12,6 +12,7 @@ import {
 import { useActiveBackend } from "#/contexts/active-backend-context";
 import {
   getVmHarnessPluginPath,
+  type GuiVmOs,
   type GuiVmTarget,
 } from "#/utils/gui-vm-launch";
 import { VM_HARNESS_QUERY_KEYS } from "./query-keys";
@@ -224,7 +225,7 @@ export function useVmHarnessCapacity() {
   };
 
   /** Free and needed MB when the host cannot fit a VM of this OS right now. */
-  const memoryShortfall = (os: "windows" | "ubuntu") => {
+  const memoryShortfall = (os: GuiVmOs) => {
     const free = status.data?.host.freeRamMB;
     const base = status.data?.memoryMB?.[os];
     if (free === undefined || base === undefined) return null;

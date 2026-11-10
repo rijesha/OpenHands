@@ -2,7 +2,28 @@
 
 Leases disposable full-GUI VMs to OpenHands agents so they can verify a change by using the real application (screenshots, mouse, keyboard) instead of only running tests in the default sandbox. It replaces the zephyr-ide `tools/ai-qa` tool's VM layer.
 
-Status: **Hyper-V on Windows** (Windows 11 and Ubuntu guests from ai-qa golden images). UTM on macOS and macOS/ARM guests are planned; the provider contract is in `providers/hyperv/provider.mjs`.
+Status: **Hyper-V on Windows** (Windows 11 and Ubuntu guests from ai-qa golden images) and **UTM on macOS** (Apple silicon: Ubuntu arm64 guests, macOS guests; Windows 11 ARM on UTM is not scripted yet). The provider is picked by host OS in `cli.mjs` (`createProvider`); see `providers/hyperv/provider.mjs` and `providers/utm/provider.mjs` for the contract (`hostCheck, create, start, waitForIp, stop, state, destroy, listOrphans, snapshot, desktop, createGolden, sealGolden, close`).
+
+## Setup (macOS, UTM)
+
+1. Install [UTM](https://mac.getutm.app) (4.7+). The harness drives it with `utmctl` and AppleScript, which macOS only allows **from the logged-in user's GUI session**: run Canvas from a terminal or a LaunchAgent in that session, not over SSH, and not as a LaunchDaemon. The first AppleScript call asks "node wants access to control UTM": allow it (System Settings > Privacy & Security > Automation lists it afterwards).
+2. The data folder defaults to `~/.openhands/vm-harness`. Keep it on the internal (APFS) disk: every lease is an APFS clone of a golden VM (seconds, almost no space), which a non-APFS volume such as a ZFS pool cannot do.
+3. `node scripts/vm-harness/cli.mjs doctor` should print `ok` for `platform`, `ssh` and `utm` (run it from Terminal; an IDE's extension host cannot get the Automation permission).
+4. Start Canvas as usual. With UTM installed the harness starts automatically (one VM at a time by default, `VM_HARNESS_MAX_VMS` to change).
+
+How a lease works on UTM: `utmctl clone` of `vmh-golden-<imageId>` to `vmh-<lease>-<os>-lease`, a fresh MAC, and for QEMU guests a VNC display and a QMP port on 127.0.0.1 (random free ports, never exposed through ingress). Screenshots come from QEMU's VNC display, mouse and keyboard go through QMP (`input-send-event`; QEMU treats VNC pointers as relative under UTM), and the IP comes from the QEMU guest agent or `/var/db/dhcpd_leases`. macOS guests (Apple Virtualization) have no hypervisor display API, so their desktop is the guest's own Screen Sharing (VNC, password from `secrets/guest-creds.json` `vncPassword`). A snapshot renames the stopped clone to a new golden; deleting an image deletes its UTM VM.
+
+## Building images on macOS (UTM)
+
+**Ubuntu (unattended).**
+1. `node scripts/vm-harness/cli.mjs images create-vm --os ubuntu --iso ~/Downloads/ubuntu-25.10-desktop-arm64.iso` (from Terminal). It creates `secrets/guest_ed25519` and `guest-creds.json` if missing, writes a cloud-init autoinstall seed (`images/ubuntu/autoinstall.yaml`), APFS-clones the ISO next to it (sandboxed UTM hangs on files in `~/Downloads`), creates `vmh-build-ubuntu` and boots it, adding `autoinstall` to the installer's kernel command line through the GRUB menu. The install takes 10-20 minutes and powers the VM off.
+2. Detach the installer and boot from disk, then provision over SSH: copy `scripts/vm-harness/images/` to the guest and run `bash images/ubuntu/provision.sh "<guest_ed25519.pub>"` as `zide` (the autoinstall leaves a temporary passwordless sudo rule that provision.sh removes). Reboot and run `images/ubuntu/validate.sh`.
+3. `images seal --os ubuntu --vm vmh-build-ubuntu --os-build 25.10 --edition desktop --vscode-version <code --version> --vscode-commit <commit> --ssh-fingerprint SHA256:...` renames it to `vmh-golden-<imageId>`, removes the installer discs and build-time VNC/QMP arguments, and writes the manifest. `--archive /Volumes/tank/vm-harness-archive` also exports a `.utm` copy. Point the `ubuntu` role at it in `images/current.json`.
+
+**macOS (partly manual).** UTM cannot install macOS from a script.
+1. In UTM: **+ > Virtualize > macOS 12+**, latest IPSW, 6-8 GB RAM, 4 cores, 64 GB disk, display 1280x800. Name it `vmh-build-macos`.
+2. In the VM: finish Setup Assistant with user `zide` (password from `secrets/guest-creds.json`, no Apple ID, FileVault off). In System Settings > General > Sharing turn on **Remote Login** and **Screen Sharing**; under Screen Sharing's (i) enable "VNC viewers may control screen with password" with `vncPassword` from `guest-creds.json`.
+3. From the host: copy `scripts/vm-harness/images/` to the guest and run `bash images/macos/provision.sh "<guest_ed25519.pub>" <<< "<password>"` over SSH (autologin, no sleep/lock/updates, VS Code, launcher). Reboot, run `images/macos/validate.sh`, then `images seal --os macos --vm vmh-build-macos ...` and set the `macos` role. Apple allows at most two macOS VMs running at once.
 
 ## Setup (Windows)
 
@@ -58,7 +79,7 @@ On the GitHub page or the home chat box, pick **Test environment → GUI VM: Win
 
 ## Not yet done
 
-UTM provider, macOS guests, noVNC take-over, a `prepared` image builder (ai-qa `images prepare`; project-specific).
+Windows 11 ARM images on UTM, noVNC take-over, a `prepared` image builder (ai-qa `images prepare`; project-specific).
 
 ## When a VM will not start
 

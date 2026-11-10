@@ -1,0 +1,44 @@
+#cloud-config
+# Unattended install for the Ubuntu Desktop golden image (UTM provider). `images create-vm --os ubuntu` fills in the
+# __PLACEHOLDERS__, writes this as the NoCloud `user-data` on a CIDATA seed ISO and attaches it next to the installer.
+# After the install, provision.sh runs over SSH (VS Code, launcher, quiet desktop) and removes the provisioning sudo rule.
+autoinstall:
+  version: 1
+  interactive-sections: []
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: UTC
+  identity:
+    hostname: __HOSTNAME__
+    realname: __USER__
+    username: __USER__
+    password: "__PASSWORD_HASH__"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "__PUBKEY__"
+  storage:
+    layout:
+      name: direct
+  packages:
+    - openssh-server
+    - qemu-guest-agent
+    - wget
+    - ca-certificates
+  late-commands:
+    # Desktop autologin: the harness drives the logged-in session.
+    - mkdir -p /target/etc/gdm3
+    - printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=__USER__\n' > /target/etc/gdm3/custom.conf
+    # Provisioning runs unattended over SSH; provision.sh deletes this rule when it is done.
+    - echo '__USER__ ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/vmh-provision
+    - chmod 440 /target/etc/sudoers.d/vmh-provision
+    # Clean shutdown for vm_snapshot / vm_save_base (`sudo -n shutdown -h now`) stays allowed after provisioning.
+    - echo '__USER__ ALL=(root) NOPASSWD:/usr/sbin/shutdown,/usr/sbin/poweroff,/usr/sbin/reboot' > /target/etc/sudoers.d/vmh-shutdown
+    - chmod 440 /target/etc/sudoers.d/vmh-shutdown
+    # The harness's click coordinates assume a 1280x800 screen (virtio-gpu connector is Virtual-1).
+    - sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 video=Virtual-1:1280x800"/' /target/etc/default/grub
+    - curtin in-target -- update-grub
+    - curtin in-target -- systemctl enable ssh qemu-guest-agent
+  shutdown: poweroff

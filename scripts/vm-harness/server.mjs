@@ -183,6 +183,7 @@ export function createServer({
         memoryMB: {
           windows: config.memoryMB,
           ubuntu: config.memoryMBUbuntu ?? config.memoryMB,
+          macos: config.memoryMBMacos ?? config.memoryMB,
         },
         root: config.root,
         rootSource: config.rootSource,
@@ -198,7 +199,10 @@ export function createServer({
         const root = typeof body.root === "string" ? body.root.trim() : "";
         if (!root || !path.isAbsolute(root))
           return send(res, 400, {
-            error: "Enter an absolute folder path, for example D:\\zide-ai-qa.",
+            error:
+              process.platform === "win32"
+                ? "Enter an absolute folder path, for example D:\\zide-ai-qa."
+                : "Enter an absolute folder path, for example /Users/you/vm-harness.",
           });
         if (!fs.existsSync(root) || !fs.statSync(root).isDirectory())
           return send(res, 400, { error: `Folder not found: ${root}` });
@@ -283,20 +287,27 @@ export function createServer({
       return send(res, 200, { ok: true });
     }
     if (imageRoute && req.method === "DELETE") {
+      let removed;
       try {
-        return send(
-          res,
-          200,
-          deleteImage(
-            config,
-            leases.images(),
-            imageRoute[1],
-            leases.imagesInUse(),
-          ),
+        removed = deleteImage(
+          config,
+          leases.images(),
+          imageRoute[1],
+          leases.imagesInUse(),
         );
       } catch (e) {
         return send(res, 409, { error: String(e.message ?? e) });
       }
+      // A UTM image is a registered VM: the manifest is gone, now delete the VM itself.
+      if (removed.utmVm && typeof provider.destroy === "function") {
+        try {
+          await provider.destroy({ name: removed.utmVm });
+          removed.diskRemoved = true;
+        } catch (e) {
+          log(`could not delete UTM VM ${removed.utmVm}: ${e.message}`);
+        }
+      }
+      return send(res, 200, removed);
     }
 
     if (req.method === "GET" && pathname === "/leases") {

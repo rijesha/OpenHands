@@ -10,18 +10,30 @@ export const GUI_VM_PLUGIN_NAME = "gui-vm-testing";
  * workspace that VS Code opens.
  */
 export type GuiVmTarget =
-  "windows" | "windows-workspace" | "ubuntu" | "ubuntu-workspace";
+  | "windows"
+  | "windows-workspace"
+  | "ubuntu"
+  | "ubuntu-workspace"
+  | "macos"
+  | "macos-workspace";
 
 export const GUI_VM_TARGETS: readonly GuiVmTarget[] = [
   "windows",
   "windows-workspace",
   "ubuntu",
   "ubuntu-workspace",
+  "macos",
+  "macos-workspace",
 ];
 
+/** A guest operating system the harness can boot. */
+export type GuiVmOs = "windows" | "ubuntu" | "macos";
+
 /** The guest OS of a baseline. */
-export function guiVmTargetOs(target: GuiVmTarget): "windows" | "ubuntu" {
-  return target.startsWith("windows") ? "windows" : "ubuntu";
+export function guiVmTargetOs(target: GuiVmTarget): GuiVmOs {
+  if (target.startsWith("windows")) return "windows";
+  if (target.startsWith("macos")) return "macos";
+  return "ubuntu";
 }
 
 const isWorkspaceTarget = (target: GuiVmTarget) =>
@@ -49,9 +61,10 @@ export function buildGuiVmPlugin(pluginPath: string): PluginSpec {
   return { source: pluginPath, name: GUI_VM_PLUGIN_NAME };
 }
 
-const GUI_VM_LABEL: Record<"windows" | "ubuntu", string> = {
+const GUI_VM_LABEL: Record<GuiVmOs, string> = {
   windows: "Windows",
   ubuntu: "Ubuntu",
+  macos: "macOS",
 };
 
 /**

@@ -136,7 +136,8 @@ export class VsCodeDriver {
    */
   async runCommand(title) {
     const page = await this.ensure();
-    await page.keyboard.press("Control+Shift+P");
+    // F1 opens the command palette on every OS (Ctrl+Shift+P is Cmd+Shift+P on macOS guests).
+    await page.keyboard.press("F1");
     await page.keyboard.type(title);
     const names = page.locator(
       ".quick-input-list .monaco-list-row .label-name",

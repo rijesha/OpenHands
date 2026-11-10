@@ -30,12 +30,14 @@ export const VM_RUN_VERDICT_COPY: Record<
   no_report: { label: I18nKey.GITHUB$VM_RUN_NO_REPORT, tone: "text-muted" },
 };
 
-/** The four baseline roles in the order the page lists them. */
+/** The baseline roles in the order the page lists them. */
 export const BASELINE_ORDER = [
   "windows",
   "windows-workspace",
   "ubuntu",
   "ubuntu-workspace",
+  "macos",
+  "macos-workspace",
 ] as const;
 
 export type BaselineRole = (typeof BASELINE_ORDER)[number];
@@ -139,26 +141,31 @@ export function minutesLeft(until: number, now = Date.now()): number {
 export function memoryNeededMB(status: VmHarnessStatus | undefined): number[] {
   const memory = status?.memoryMB;
   if (!memory) return [];
-  return [...new Set([memory.ubuntu, memory.windows])]
+  return [...new Set([memory.ubuntu, memory.windows, memory.macos])]
+    .filter((mb): mb is number => typeof mb === "number")
     .map((mb) => mb + 512)
     .sort((a, b) => a - b);
 }
 
-/** Screen size the harness reports click coordinates in. */
+/** Screen size the harness reports click coordinates in, unless a screenshot says otherwise. */
 export const VM_SCREEN = { width: 1280, height: 800 } as const;
 
-/** Maps a click on the (scaled) screenshot to VM screen pixels, kept on screen. */
+/**
+ * Maps a click on the (scaled) screenshot to VM screen pixels, kept on screen. `screen` is the size the screenshot
+ * came in (a macOS guest may not run at the default 1280x800).
+ */
 export function toScreenPoint(
   offsetX: number,
   offsetY: number,
   shownWidth: number,
   shownHeight: number,
+  screen: { width: number; height: number } = VM_SCREEN,
 ): { x: number; y: number } {
   const clamp = (value: number, max: number) =>
     Math.min(Math.max(Math.round(value), 0), max - 1);
   return {
-    x: clamp((offsetX / shownWidth) * VM_SCREEN.width, VM_SCREEN.width),
-    y: clamp((offsetY / shownHeight) * VM_SCREEN.height, VM_SCREEN.height),
+    x: clamp((offsetX / shownWidth) * screen.width, screen.width),
+    y: clamp((offsetY / shownHeight) * screen.height, screen.height),
   };
 }
 

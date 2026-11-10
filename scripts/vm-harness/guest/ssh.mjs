@@ -310,8 +310,12 @@ export class SshGuestSession {
           return { name, isDir: dir === "True", size: Number(size) || 0 };
         });
     }
+    const q = remote.replace(/'/g, "'\\''");
+    // macOS has BSD find (no -printf): use BSD stat, whose %HT says "Directory".
     const r = await this.exec(
-      `find '${remote.replace(/'/g, "'\\''")}' -mindepth 1 -maxdepth 1 -printf '%f|%y|%s\\n'`,
+      this.os === "macos"
+        ? `find '${q}' -mindepth 1 -maxdepth 1 -exec stat -f '%N|%HT|%z' {} +`
+        : `find '${q}' -mindepth 1 -maxdepth 1 -printf '%f|%y|%s\\n'`,
       { timeoutMs: 30_000 },
     );
     if (r.code !== 0)
@@ -321,7 +325,13 @@ export class SshGuestSession {
       .filter(Boolean)
       .map((l) => {
         const [name, type, size] = l.split("|");
-        return { name, isDir: type === "d", size: Number(size) || 0 };
+        return this.os === "macos"
+          ? {
+              name: path.posix.basename(name),
+              isDir: type === "Directory",
+              size: Number(size) || 0,
+            }
+          : { name, isDir: type === "d", size: Number(size) || 0 };
       });
   }
 

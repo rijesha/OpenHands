@@ -292,7 +292,7 @@ OPTIONS:
   --dynamic                   Force Vite dev server when a wrapper defaults static
   --frontend-only             Start only the frontend behind ingress
   --backend-only              Start only agent-server + automation behind ingress
-  --vm-harness                Start the GUI VM test harness (Hyper-V). Already the default on Windows with pwsh
+  --vm-harness                Start the GUI VM test harness (Hyper-V or UTM). Already the default on Windows with pwsh and on macOS with UTM
   --no-vm-harness             Do not start the GUI VM test harness (env: OH_VM_HARNESS=0)
   --allow-lan-session-key      Inject the session key on a non-loopback bind (opt-in)
   -v, --verbose               Set backend log level to DEBUG (default: WARNING)
@@ -466,13 +466,14 @@ async function buildConfig(args, env = process.env) {
   const launchAutomation = !frontendOnly;
   // The GUI VM harness needs a hypervisor on this machine, so it never runs
   // when the agent-server itself is not started here. It starts by default on
-  // Windows (Hyper-V provider) when PowerShell 7 is installed; its data folder
-  // is chosen on the Test VMs page. Opt out with --no-vm-harness or OH_VM_HARNESS=0.
+  // Windows (Hyper-V provider) when PowerShell 7 is installed and on macOS
+  // (UTM provider) when UTM is installed; its data folder is chosen on the
+  // Test VMs page. Opt out with --no-vm-harness or OH_VM_HARNESS=0.
   const vmHarnessOptOut =
     Boolean(args.noVmHarness) || env.OH_VM_HARNESS === "0";
   const vmHarnessRequested =
     Boolean(args.vmHarness) || env.OH_VM_HARNESS === "1";
-  const vmHarnessAuto = process.platform === "win32" && commandExists("pwsh");
+  const vmHarnessAuto = vmHarnessUnsupportedReason() === null;
   const launchVmHarness =
     !frontendOnly &&
     !vmHarnessOptOut &&
@@ -1297,22 +1298,34 @@ export function getVmHarnessPluginDir(config) {
   return join(config.stateDir, "vm-harness", "plugin");
 }
 
+export const UTMCTL_PATH = "/Applications/UTM.app/Contents/MacOS/utmctl";
+
 /**
- * Fails fast, before any service starts, when the harness is enabled on a host
- * it cannot drive. Hyper-V (Windows) is implemented; UTM (macOS) is not yet.
+ * Why this host cannot run the GUI VM harness, or null when it can: Hyper-V
+ * on Windows needs PowerShell 7, UTM on macOS needs UTM installed.
+ * @param {{ platform?: string, hasCommand?: (cmd: string) => boolean, fileExists?: (p: string) => boolean }} [o]
  */
+export function vmHarnessUnsupportedReason({
+  platform = process.platform,
+  hasCommand = commandExists,
+  fileExists = existsSync,
+} = {}) {
+  if (platform === "win32")
+    return hasCommand("pwsh")
+      ? null
+      : "--vm-harness needs PowerShell 7 (pwsh) on PATH to manage Hyper-V VMs.";
+  if (platform === "darwin")
+    return fileExists(UTMCTL_PATH)
+      ? null
+      : `--vm-harness needs UTM (${UTMCTL_PATH} not found; install UTM from https://mac.getutm.app).`;
+  return `--vm-harness: no VM provider for ${platform} (Hyper-V on Windows and UTM on macOS are supported).`;
+}
+
+/** Fails fast, before any service starts, when the harness is enabled on a host it cannot drive. */
 function checkVmHarnessPrerequisites(config) {
   if (!config.launchVmHarness) return;
-  if (process.platform !== "win32") {
-    throw new Error(
-      `--vm-harness: no VM provider for ${process.platform} yet (Hyper-V on Windows is supported; UTM on macOS is planned).`,
-    );
-  }
-  if (!commandExists("pwsh")) {
-    throw new Error(
-      "--vm-harness needs PowerShell 7 (pwsh) on PATH to manage Hyper-V VMs.",
-    );
-  }
+  const reason = vmHarnessUnsupportedReason();
+  if (reason) throw new Error(reason);
 }
 
 /**

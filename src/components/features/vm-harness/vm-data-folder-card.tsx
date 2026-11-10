@@ -9,8 +9,12 @@ import {
 import { I18nKey } from "#/i18n/declaration";
 import { VmActionError, VmButton, VmCard, vmInputClassName } from "./vm-ui";
 
-/** An example of a data folder, not copy: it is a path on the host. */
-const FOLDER_PLACEHOLDER = String.raw`D:\zide-ai-qa`;
+/** An example of a data folder, not copy: it is a path on the host, so it follows the host's path style. */
+export function folderPlaceholder(currentRoot: string | undefined): string {
+  return currentRoot?.includes("\\") || /^[A-Za-z]:/.test(currentRoot ?? "")
+    ? String.raw`D:\zide-ai-qa`
+    : "/Users/you/vm-harness";
+}
 
 const SOURCE_NOTE: Record<string, I18nKey> = {
   settings: I18nKey.VM_HARNESS$FOLDER_SOURCE_SETTINGS,
@@ -168,7 +172,7 @@ export function VmDataFolderCard() {
           type="text"
           data-testid="vm-folder-input"
           aria-label={t(I18nKey.VM_HARNESS$FOLDER_LABEL)}
-          placeholder={FOLDER_PLACEHOLDER}
+          placeholder={folderPlaceholder(settings.root)}
           value={value}
           disabled={locked}
           onChange={(event) => setDraft(event.target.value)}

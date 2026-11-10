@@ -438,7 +438,7 @@ export function buildTools({ config, leases }) {
 
   add(
     "vm_wait_for",
-    "Wait (max 55 s per call) until a condition holds in the guest, without spending your turns. Returns early with INTERRUPTED if a UAC prompt (Windows) or sudo prompt (Linux) appears and you listed it in interruptOn; take a screenshot and handle it. Call again if it times out.",
+    "Wait (max 55 s per call) until a condition holds in the guest, without spending your turns. Returns early with INTERRUPTED if a UAC prompt (Windows) or sudo/admin password prompt (Linux, macOS) appears and you listed it in interruptOn; take a screenshot and handle it. Call again if it times out.",
     {
       ...VM,
       until: str({ enum: ["file-exists", "file-contains", "process-gone"] }),

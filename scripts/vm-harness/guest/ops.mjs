@@ -172,10 +172,87 @@ class UbuntuOps {
   }
 }
 
+/** VS Code's main process on macOS; matches both `Code` and the newer `Electron` binary name. */
+const MAC_CODE = "Visual Studio Code.app/Contents/MacOS/";
+
+/** macOS guest (Apple Virtualization under UTM): user "zide" with autologin, Remote Login and Screen Sharing on. */
+class MacOps {
+  constructor(session, user) {
+    this.s = session;
+    this.user = user;
+    this.paths = {
+      inbox: `/Users/${user}/zide-in`,
+      workspace: `/Users/${user}/zws`,
+      appLogs: `/Users/${user}/Library/Application Support/Code/logs`,
+    };
+  }
+
+  /** The autologin session is up once Finder and the Dock run for the user. */
+  waitForDesktop(timeoutMs) {
+    return poll(
+      async () =>
+        (
+          await this.s.exec(
+            'pgrep -u "$(id -u)" -x Finder >/dev/null && pgrep -u "$(id -u)" -x Dock >/dev/null',
+            { timeoutMs: 15_000 },
+          )
+        ).code === 0,
+      timeoutMs,
+      "the macOS desktop (Finder and Dock)",
+    );
+  }
+
+  async launchVsCode({ cdpPort, extraArgs = [], folder }) {
+    const extra = extraArgs
+      .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+    const target = (folder ?? this.paths.workspace).replace(/'/g, "'\\''");
+    const r = await this.s.exec(
+      `~/zide-bin/launch-vscode.sh '${target}' ${cdpPort} ${extra}`,
+      { timeoutMs: 30_000 },
+    );
+    assertOk(r, "launching VS Code", 30_000);
+  }
+
+  killApp() {
+    return this.s.exec(`pkill -f '${MAC_CODE}' || true`, { timeoutMs: 30_000 });
+  }
+
+  async appRunning() {
+    return (
+      (
+        await this.s.exec(
+          `pgrep -f '${MAC_CODE}' >/dev/null && echo yes || echo no`,
+          { timeoutMs: 20_000 },
+        )
+      ).stdout.trim() === "yes"
+    );
+  }
+
+  async resetWorkspace({ keep = false } = {}) {
+    const clear = keep
+      ? ""
+      : ` && find ${this.paths.workspace} -mindepth 1 -delete`;
+    const r = await this.s.exec(`mkdir -p ${this.paths.workspace}${clear}`, {
+      timeoutMs: 60_000,
+    });
+    assertOk(r, "resetting the workspace", 60_000);
+  }
+
+  /** An admin password dialog (SecurityAgent) or a waiting sudo counts as the "sudo" interrupt. */
+  async pendingElevation() {
+    const r = await this.s.exec(
+      "(pgrep -x SecurityAgent || pgrep -x sudo) >/dev/null && echo yes || echo no",
+      { timeoutMs: 15_000 },
+    );
+    return r.stdout.trim() === "yes" ? "sudo" : null;
+  }
+}
+
 export function opsFor(os, session, user) {
-  return os === "windows"
-    ? new WindowsOps(session, user)
-    : new UbuntuOps(session, user);
+  if (os === "windows") return new WindowsOps(session, user);
+  if (os === "macos") return new MacOps(session, user);
+  return new UbuntuOps(session, user);
 }
 
 /**
