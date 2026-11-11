@@ -1,10 +1,8 @@
 import { Gauge } from "lucide-react";
-import React from "react";
 import { useTranslation } from "react-i18next";
 import type { ClaudeCodeUsageWindow } from "#/api/claude-code-usage";
 import { UsageWindow } from "#/components/features/chat/components/claude-code-usage-window";
 import { useClaudeCodeUsage } from "#/hooks/use-claude-code-controls";
-import { useIsClaudeCodeUsed } from "#/hooks/use-is-claude-code-used";
 import { I18nKey } from "#/i18n/declaration";
 import { cn } from "#/utils/utils";
 
@@ -15,28 +13,11 @@ const percentOf = (window: ClaudeCodeUsageWindow, checkedAt: number) =>
 
 /**
  * Claude Code's remaining usage limits, always in the sidebar on a local
- * backend. When Claude Code is the agent in use, the helper that reports the
- * limits is set up by itself, once: until Claude Code's first message after
- * that, the meter says it is waiting. An existing status line of the user's is
- * never replaced, and the meter says so.
+ * backend, read live from the login Claude Code keeps on that machine.
  */
 export function SidebarClaudeCodeUsage({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation("openhands");
-  const { isLocal, usage, checkedAt, isLoading, setupOutcome, install } =
-    useClaudeCodeUsage(true);
-  const isClaudeCodeUsed = useIsClaudeCodeUsed();
-
-  const shouldSetUp =
-    isLocal &&
-    isClaudeCodeUsed &&
-    !isLoading &&
-    !usage &&
-    setupOutcome === null &&
-    install.isIdle;
-  const { mutate: setUp } = install;
-  React.useEffect(() => {
-    if (shouldSetUp) setUp();
-  }, [shouldSetUp, setUp]);
+  const { isLocal, usage, checkedAt } = useClaudeCodeUsage(true);
 
   if (!isLocal) return null;
 
@@ -86,43 +67,6 @@ export function SidebarClaudeCodeUsage({ collapsed }: { collapsed: boolean }) {
     );
   }
 
-  let status: React.ReactNode = null;
-  if (!usage) {
-    if (setupOutcome === "occupied") {
-      status = t(I18nKey.CLAUDE_CODE$USAGE_OCCUPIED);
-    } else if (install.isError) {
-      status = (
-        <>
-          {t(I18nKey.CLAUDE_CODE$USAGE_ERROR)}{" "}
-          <button
-            type="button"
-            data-testid="sidebar-claude-code-usage-retry"
-            onClick={() => install.mutate()}
-            className="underline"
-          >
-            {t(I18nKey.CLAUDE_CODE$USAGE_SETUP)}
-          </button>
-        </>
-      );
-    } else if (install.isPending || setupOutcome !== null || isClaudeCodeUsed) {
-      status = t(I18nKey.CLAUDE_CODE$USAGE_WAITING);
-    } else {
-      status = (
-        <>
-          {t(I18nKey.CLAUDE_CODE$USAGE_NOT_USED)}{" "}
-          <button
-            type="button"
-            data-testid="sidebar-claude-code-usage-setup"
-            onClick={() => install.mutate()}
-            className="underline"
-          >
-            {t(I18nKey.CLAUDE_CODE$USAGE_SETUP)}
-          </button>
-        </>
-      );
-    }
-  }
-
   return (
     <div
       data-testid="sidebar-claude-code-usage"
@@ -154,7 +98,7 @@ export function SidebarClaudeCodeUsage({ collapsed }: { collapsed: boolean }) {
           <Gauge className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span data-testid="sidebar-claude-code-usage-status">
             <span className="text-contrast">{label}. </span>
-            {status}
+            {t(I18nKey.CLAUDE_CODE$USAGE_NOT_USED)}
           </span>
         </div>
       )}

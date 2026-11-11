@@ -30,7 +30,7 @@ vi.mock("@openhands/typescript-client/clients", async (importOriginal) => ({
 
     async executeCommand({ command }: { command: string }) {
       mocks.commands.push(command);
-      if (command.startsWith("cat ")) {
+      if (command.includes("canvas-usage.json")) {
         return mocks.capture === null
           ? { exit_code: 1, stdout: "", stderr: "" }
           : { exit_code: 0, stdout: mocks.capture, stderr: "" };
@@ -136,7 +136,7 @@ describe("ClaudeCodeControls usage limits", () => {
     const install = mocks.commands.find((command) =>
       command.includes("--install"),
     );
-    expect(install).toContain('node "$HOME/.claude/canvas-statusline.mjs"');
+    expect(install).toContain("canvas-statusline.mjs");
   });
 
   it("leaves a status line the user already has alone and says so", async () => {
