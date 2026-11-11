@@ -22,6 +22,7 @@ export default [
     route("extensions/:extensionName/*", "routes/canvas-extension-page.tsx"),
     route("mcp", "routes/mcp.tsx"),
     route("github", "routes/github.tsx"),
+    route("projects", "routes/projects.tsx"),
     route("test-vms", "routes/test-vms.tsx"),
     route("test-vms/runs/:runId", "routes/test-vm-run.tsx"),
     route("settings", "routes/settings.tsx", [

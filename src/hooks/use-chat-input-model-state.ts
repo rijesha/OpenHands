@@ -22,6 +22,8 @@ import { I18nKey } from "#/i18n/declaration";
 
 export interface ChatInputModelState {
   isAcpContext: boolean;
+  /** The ACP agent (`claude-code`, `codex`, ...) this surface drives, or null outside ACP. */
+  acpServerKey: string | null;
   displayModel: string | null;
   currentModelId: string | null;
   /** The saved choice the picker marks; null is the agent's own default. */
@@ -145,6 +147,7 @@ export function useChatInputModelState(): ChatInputModelState {
 
   return {
     isAcpContext,
+    acpServerKey: isAcpContext ? (acpServerKey ?? null) : null,
     displayModel,
     currentModelId,
     selectedModelId,

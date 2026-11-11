@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
     role: string;
   }[],
   historyEvents: [] as unknown[],
+  executionStatus: "finished" as string | null,
+  projects: [] as Record<string, unknown>[],
   harnessRuns: [] as Record<string, unknown>[],
   harnessLeases: [] as Record<string, unknown>[],
   harnessRunDetails: {} as Record<string, unknown>,
@@ -94,6 +96,16 @@ vi.mock("#/hooks/query/use-conversation-history", () => ({
   }),
 }));
 
+vi.mock("#/hooks/query/use-projects", () => ({
+  useProjects: () => ({ projects: mocks.projects }),
+}));
+
+vi.mock("#/hooks/query/use-user-conversation", () => ({
+  useUserConversation: () => ({
+    data: { execution_status: mocks.executionStatus },
+  }),
+}));
+
 vi.mock("#/hooks/use-user-providers", () => ({
   useUserProviders: () => ({ providers: [], isLoadingSettings: false }),
 }));
@@ -144,6 +156,9 @@ function useBackend(kind: "cloud" | "local") {
   setActiveSelection({ backendId: backendFor(kind).id });
 }
 
+const openTab = async (id: "runs" | "checks" | "files" | "discussion") =>
+  userEvent.click(await screen.findByTestId(`github-detail-tab-${id}`));
+
 beforeEach(() => {
   __resetActiveStoreForTests();
   useBackend("cloud");
@@ -152,9 +167,14 @@ beforeEach(() => {
   mocks.createConversation.mockReset();
   mocks.renameConversation.mockReset();
   mocks.navigate.mockReset();
-  useGithubRecentRepositoriesStore.setState({ repositories: [] });
+  useGithubRecentRepositoriesStore.setState({
+    repositories: [],
+    lastUsed: null,
+  });
   useGithubAgentRunsStore.setState({ runs: {} });
   mocks.historyEvents = [];
+  mocks.executionStatus = "finished";
+  mocks.projects = [];
   mocks.harnessRuns = [];
   mocks.harnessLeases = [];
   mocks.harnessRunDetails = {};
@@ -257,41 +277,144 @@ describe("GitHub route", () => {
     expect(variables.query).toContain("clone https://github.com/acme/widgets");
   });
 
-  describe("recent repositories", () => {
-    it("offers a repository again, without retyping, after it was opened", async () => {
+  describe("saved repositories", () => {
+    it("reopens the last repository used when the page is visited without one", async () => {
+      useGithubRecentRepositoriesStore.setState({
+        repositories: ["acme/widgets", "acme/other"],
+        lastUsed: "acme/widgets",
+      });
       githubResponds({ "/repos/acme/widgets/issues": [githubRow(1)] });
-      const first = renderAt("/github?repo=acme/widgets");
-      await screen.findByText("Item 1");
-      first.unmount();
 
       renderAt("/github");
-      await userEvent.click(
-        await screen.findByTestId("github-recent-repository-acme/widgets"),
-      );
 
       expect(await screen.findByText("Item 1")).toBeInTheDocument();
     });
 
-    it("lets the user switch to another recent repository and forget one", async () => {
+    it("keeps a repository opened from a link off the list until the user adds it", async () => {
+      githubResponds({ "/repos/acme/widgets/issues": [githubRow(1)] });
+      renderAt("/github?repo=acme/widgets");
+      await screen.findByText("Item 1");
+
+      expect(
+        screen.queryByTestId("github-repository-option-acme/widgets"),
+      ).toBeNull();
+      await userEvent.click(screen.getByTestId("github-save-repository"));
+
+      expect(
+        screen.getByTestId("github-repository-option-acme/widgets"),
+      ).toHaveAttribute("aria-current", "true");
+    });
+
+    it("adds a typed repository and opens it", async () => {
+      githubResponds({ "/repos/acme/widgets/issues": [githubRow(1)] });
+      renderAt("/github");
+
+      await userEvent.type(
+        await screen.findByTestId("github-repository-input"),
+        "https://github.com/acme/widgets",
+      );
+      await userEvent.click(screen.getByTestId("github-repository-open"));
+
+      expect(await screen.findByText("Item 1")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("github-repository-option-acme/widgets"),
+      ).toBeInTheDocument();
+    });
+
+    it("switches between saved repositories and removes one", async () => {
       useGithubRecentRepositoriesStore.setState({
-        repositories: ["acme/other", "acme/stale"],
+        repositories: ["acme/widgets", "acme/other", "acme/stale"],
       });
       githubResponds({ "/repos/acme/widgets/issues": [githubRow(1)] });
       renderAt("/github?repo=acme/widgets");
 
       await userEvent.click(
-        await screen.findByTestId("github-forget-repository-acme/stale"),
+        await screen.findByTestId("github-remove-repository-acme/stale"),
       );
 
       expect(
-        screen.queryByTestId("github-recent-repository-acme/stale"),
+        screen.queryByTestId("github-repository-option-acme/stale"),
       ).toBeNull();
       expect(
-        screen.getByTestId("github-recent-repository-acme/other"),
+        screen.getByTestId("github-repository-option-acme/other"),
       ).toBeInTheDocument();
+      expect(await screen.findByText("Item 1")).toBeInTheDocument();
+    });
+
+    it("moves to the next saved repository when the open one is removed, and to the empty state after the last", async () => {
+      useGithubRecentRepositoriesStore.setState({
+        repositories: ["acme/widgets", "acme/other"],
+        lastUsed: "acme/widgets",
+      });
+      githubResponds({
+        "/repos/acme/widgets/issues": [githubRow(1)],
+        "/repos/acme/other/issues": [githubRow(2)],
+      });
+      renderAt("/github?repo=acme/widgets");
+      await screen.findByText("Item 1");
+
+      await userEvent.click(
+        screen.getByTestId("github-remove-repository-acme/widgets"),
+      );
+      expect(await screen.findByText("Item 2")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByTestId("github-remove-repository-acme/other"),
+      );
       expect(
-        screen.queryByTestId("github-recent-repository-acme/widgets"),
-      ).toBeNull();
+        await screen.findByTestId("github-select-repository-prompt"),
+      ).toBeInTheDocument();
+      expect(useGithubRecentRepositoriesStore.getState().lastUsed).toBeNull();
+    });
+  });
+
+  describe("local checkout", () => {
+    const checkout = (repository: string) => ({
+      isGit: true,
+      provider: "github",
+      repository,
+      workspace: { id: "w", name: "widgets", path: "/code/widgets" },
+    });
+
+    it("works in an isolated worktree of a repository already on this machine, with nothing to clone", async () => {
+      useBackend("local");
+      mocks.projects = [checkout("Acme/Widgets")];
+      githubResponds({
+        "/repos/acme/widgets/issues": [githubRow(5)],
+        "/repos/acme/widgets/issues/5": githubRow(5),
+      });
+      renderAt("/github?repo=acme/widgets&item=5");
+
+      await userEvent.click(
+        await screen.findByTestId("github-agent-action-work_on_issue"),
+      );
+
+      const [variables] = mocks.createConversation.mock.calls[0];
+      expect(variables).toMatchObject({
+        workingDir: "/code/widgets",
+        workspaceMode: "new_worktree",
+      });
+      expect(variables.query).not.toContain("clone https://github.com");
+    });
+
+    it("still clones when the checkout belongs to another repository", async () => {
+      useBackend("local");
+      mocks.projects = [checkout("acme/other")];
+      githubResponds({
+        "/repos/acme/widgets/issues": [githubRow(5)],
+        "/repos/acme/widgets/issues/5": githubRow(5),
+      });
+      renderAt("/github?repo=acme/widgets&item=5");
+
+      await userEvent.click(
+        await screen.findByTestId("github-agent-action-work_on_issue"),
+      );
+
+      const [variables] = mocks.createConversation.mock.calls[0];
+      expect(variables.workingDir).toBeUndefined();
+      expect(variables.query).toContain(
+        "clone https://github.com/acme/widgets",
+      );
     });
   });
 
@@ -491,6 +614,7 @@ describe("GitHub agent results", () => {
         url: "https://github.com/acme/widgets/issues/5#c1",
       });
     renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
 
     const result = await screen.findByTestId("github-agent-run-result");
     expect(within(result).getByText("root cause")).toBeInTheDocument();
@@ -525,6 +649,7 @@ describe("GitHub agent results", () => {
         ).GitProviderApiError("GitHub", 403),
       );
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     await userEvent.click(await screen.findByTestId("github-post-open"));
     await userEvent.click(screen.getByTestId("github-post-submit"));
@@ -555,6 +680,7 @@ describe("GitHub agent results", () => {
       .spyOn(AgentServerConversationService, "sendMessage")
       .mockResolvedValue({} as never);
     renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
 
     await userEvent.click(await screen.findByTestId("github-push-and-pr"));
 
@@ -582,11 +708,12 @@ describe("GitHub agent run status", () => {
       "/repos/acme/widgets/issues/5": githubRow(5),
     });
     seedRun(5, "work_on_issue");
+    mocks.executionStatus = "running";
     mocks.historyEvents = [
-      stateEvent("running"),
       agentMessage("Let's give the VM harness another attempt."),
     ];
     renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
 
     expect(
       await screen.findByTestId("github-agent-run-status"),
@@ -598,12 +725,68 @@ describe("GitHub agent run status", () => {
     expect(screen.getByTestId("github-push")).toBeDisabled();
   });
 
+  it("opens only the newest run, lists earlier ones on request, and removes a run", async () => {
+    githubResponds({
+      "/repos/acme/widgets/issues": [githubRow(5)],
+      "/repos/acme/widgets/issues/5": githubRow(5),
+    });
+    const record = useGithubAgentRunsStore.getState().record;
+    const key = githubRunKey("cloud-backend", "acme/widgets", 5);
+    record(key, {
+      conversationId: "conv-old",
+      action: "work_on_issue",
+      startedAt: "2026-08-01T10:00:00Z",
+    });
+    record(key, {
+      conversationId: "conv-new",
+      action: "create_pull_request",
+      startedAt: "2026-09-01T10:00:00Z",
+    });
+    renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
+
+    expect(
+      await screen.findByTestId("github-agent-run-conv-new"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("github-agent-run-conv-old")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("github-agent-runs-toggle"));
+    expect(screen.getByTestId("github-agent-run-conv-old")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByTestId("github-agent-run-remove-conv-new"),
+    );
+    expect(screen.queryByTestId("github-agent-run-conv-new")).toBeNull();
+    expect(screen.getByTestId("github-agent-run-conv-old")).toBeInTheDocument();
+  });
+
+  it("keeps a long turn running and unpostable when its status event is out of the loaded history", async () => {
+    githubResponds({
+      "/repos/acme/widgets/issues": [githubRow(5)],
+      "/repos/acme/widgets/issues/5": githubRow(5),
+    });
+    seedRun(5, "work_on_issue");
+    mocks.executionStatus = "running";
+    mocks.historyEvents = Array.from({ length: 50 }, (_, i) =>
+      agentMessage(`edit ${i}`),
+    );
+    renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
+
+    expect(
+      await screen.findByTestId("github-agent-run-status"),
+    ).toHaveAttribute("data-status", "running");
+    expect(screen.getByTestId("github-post-open")).toBeDisabled();
+    expect(screen.getByTestId("github-push")).toBeDisabled();
+  });
+
   it("explains a usage limit and resumes the run with a message", async () => {
     githubResponds({
       "/repos/acme/widgets/issues": [githubRow(5)],
       "/repos/acme/widgets/issues/5": githubRow(5),
     });
     seedRun(5, "work_on_issue");
+    mocks.executionStatus = "error";
     mocks.historyEvents = [
       stateEvent("running"),
       {
@@ -617,6 +800,7 @@ describe("GitHub agent run status", () => {
       .spyOn(AgentServerConversationService, "sendMessage")
       .mockResolvedValue({} as never);
     renderAt("/github?repo=acme/widgets&item=5");
+    await openTab("runs");
 
     expect(
       await screen.findByTestId("github-agent-run-notice"),
@@ -679,6 +863,7 @@ describe("GitHub pull request detail", () => {
       }),
     );
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("checks");
 
     expect(await screen.findByTestId("github-check-unit")).toHaveAttribute(
       "data-state",
@@ -688,9 +873,13 @@ describe("GitHub pull request detail", () => {
       "data-state",
       "success",
     );
+
+    await openTab("discussion");
     expect(
       await screen.findByTestId("github-discussion-comment-1"),
     ).toHaveTextContent("reviewer");
+
+    await openTab("files");
     expect(await screen.findByTestId("github-changed-files")).toHaveTextContent(
       "src/a.ts",
     );
@@ -733,6 +922,7 @@ describe("GitHub pull request detail", () => {
       .spyOn(GitProviderItemsService, "postGithubReview")
       .mockResolvedValue({ url: "https://github.com/acme/widgets/pull/7#r1" });
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     await userEvent.click(await screen.findByTestId("github-post-open"));
     expect(screen.getByTestId("github-post-textarea")).toHaveValue(
@@ -777,6 +967,7 @@ describe("GitHub pull request actions", () => {
       .spyOn(GitProviderItemsService, "mergeGithubPullRequest")
       .mockResolvedValue();
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("checks");
 
     await userEvent.selectOptions(
       await screen.findByTestId("github-merge-method"),
@@ -805,6 +996,7 @@ describe("GitHub pull request actions", () => {
       routes(openPull({ mergeable: false, mergeable_state: "dirty" })),
     );
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("checks");
 
     expect(await screen.findByTestId("github-pr-merge")).toBeDisabled();
     expect(screen.getByText("GITHUB$MERGE_HINT_CONFLICT")).toBeInTheDocument();
@@ -828,6 +1020,7 @@ describe("GitHub pull request actions", () => {
         ).GitProviderApiError("GitHub", 422),
       );
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("checks");
 
     await userEvent.click(await screen.findByTestId("github-pr-approve"));
 
@@ -869,6 +1062,7 @@ describe("GitHub pull request actions", () => {
       .spyOn(GitProviderItemsService, "rerunGithubWorkflowRun")
       .mockResolvedValue();
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("checks");
 
     expect(await screen.findByTestId("github-run-11")).toHaveAttribute(
       "data-state",
@@ -1079,6 +1273,7 @@ describe("GUI VM test evidence on the item", () => {
 
   it("shows the runs of this item without any agent run remembered by this browser", async () => {
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     const section = await screen.findByTestId("github-vm-runs");
     expect(
@@ -1095,6 +1290,7 @@ describe("GUI VM test evidence on the item", () => {
 
   it("opens the newest run with its steps and screenshots, and leaves older runs closed", async () => {
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     expect(await screen.findByText("All good")).toBeInTheDocument();
     expect(screen.getByTestId("vm-step-s1")).toHaveTextContent(
@@ -1117,6 +1313,7 @@ describe("GUI VM test evidence on the item", () => {
 
   it("steps through a run's screenshots in a lightbox with the keyboard", async () => {
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     await userEvent.click(
       await screen.findByTestId("vm-screenshot-001-open.png"),
@@ -1140,6 +1337,7 @@ describe("GUI VM test evidence on the item", () => {
 
   it("filters the gallery to the screenshots steps cite", async () => {
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     await screen.findByTestId("vm-screenshot-002-saved.png");
     await userEvent.click(screen.getByTestId("vm-filter-evidence"));
@@ -1171,6 +1369,7 @@ describe("GUI VM test evidence on the item", () => {
       screenshots: [],
     };
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     const failure = await screen.findByTestId("vm-boot-failure");
     expect(failure).toHaveTextContent("timed out");
@@ -1190,6 +1389,7 @@ describe("GUI VM test evidence on the item", () => {
       },
     ];
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     const live = await screen.findByTestId("github-vm-live-lffff01");
     // Tests render translation keys, so the booting label stands for its text.
@@ -1200,6 +1400,7 @@ describe("GUI VM test evidence on the item", () => {
 
   it("links a run to its page on the Test VMs route", async () => {
     renderAt("/github?repo=acme/widgets&tab=pulls&item=7");
+    await openTab("runs");
 
     await userEvent.click(await screen.findByTestId("github-vm-run-l00002"));
     expect(mocks.navigate).toHaveBeenCalledWith("/test-vms/runs/l00002");

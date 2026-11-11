@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   ChevronRight,
+  FolderGit2,
   MonitorPlay,
   Plus,
   Server,
@@ -31,6 +32,7 @@ import { CommandMenuTrigger } from "#/components/features/command-menu/command-m
 import { AgentCanvasVersionTile } from "#/components/features/settings/agent-canvas-version-tile";
 import { SidebarConversationList } from "./sidebar-conversation-list";
 import { SidebarOnboardingChecklist } from "./sidebar-onboarding-checklist";
+import { SidebarClaudeCodeUsage } from "./sidebar-claude-code-usage";
 import AutomationsIcon from "#/icons/automations.svg?react";
 import { FaGithub } from "react-icons/fa6";
 import {
@@ -51,6 +53,7 @@ import type { Backend } from "#/api/backend-registry/types";
 
 const ICON_SIZE = 18;
 const GITHUB_PATH = "/github";
+const PROJECTS_PATH = "/projects";
 const SIDEBAR_LOGO_WIDTH = 34;
 const SIDEBAR_LOGO_HEIGHT = Math.round((SIDEBAR_LOGO_WIDTH * 30) / 46);
 
@@ -283,6 +286,20 @@ export function SidebarRailBody({
             "sidebar-pin-home-toggle-github",
           )}
         />
+        {/* Projects are folders on the agent-server's machine, so only a local backend has them. */}
+        {activeBackend.kind === "local" ? (
+          <SidebarNavLink
+            to={PROJECTS_PATH}
+            label={t(I18nKey.PROJECTS$PAGE_TITLE)}
+            testId="sidebar-projects-link"
+            collapsed={collapsed}
+            icon={<FolderGit2 size={ICON_SIZE} aria-hidden />}
+            pinAction={buildPinAction(
+              PROJECTS_PATH,
+              "sidebar-pin-home-toggle-projects",
+            )}
+          />
+        ) : null}
         {hasVmHarness ? (
           <SidebarNavLink
             to={TEST_VMS_PATH}
@@ -322,6 +339,7 @@ export function SidebarRailBody({
             "mt-auto pb-2 cursor-pointer",
           )}
         >
+          <SidebarClaudeCodeUsage collapsed />
           <StyledTooltip
             content={t(I18nKey.SIDEBAR$SETTINGS)}
             placement="right"
@@ -443,6 +461,7 @@ export function SidebarRailBody({
               "-ml-2.5 w-[calc(100%+0.625rem)] border-t border-border pt-2 px-2.5",
             )}
           >
+            <SidebarClaudeCodeUsage collapsed={false} />
             <AgentCanvasVersionTile hideWhenUpToDate />
             <BackendSelector
               sidebarCollapsed={collapsed}

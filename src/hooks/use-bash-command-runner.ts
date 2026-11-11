@@ -5,7 +5,8 @@ import { getAgentServerClientOptions } from "#/api/agent-server-client-options";
 
 export type BashCommandRunner = (
   command: string,
-  cwd: string,
+  /** `undefined` runs in the agent-server's own working directory. */
+  cwd: string | undefined,
   timeout: number,
 ) => Promise<CommandResult>;
 
@@ -17,7 +18,7 @@ export function useBashCommandRunner(
   conversationId?: string,
 ): BashCommandRunner {
   return useCallback(
-    async (command: string, cwd: string, timeout: number) => {
+    async (command: string, cwd: string | undefined, timeout: number) => {
       if (!enabled) throw new Error("Bash command runner is disabled");
       const client = new BashClient(
         getAgentServerClientOptions({

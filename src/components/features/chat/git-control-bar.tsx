@@ -5,6 +5,7 @@ import { GitControlBarBranchButton } from "./git-control-bar-branch-button";
 import { GitControlBarPullButton } from "./git-control-bar-pull-button";
 import { GitControlBarPushButton } from "./git-control-bar-push-button";
 import { GitControlBarPrButton } from "./git-control-bar-pr-button";
+import { GitControlBarShipButton } from "./git-control-bar-ship-button";
 import { useActiveConversation } from "#/hooks/query/use-active-conversation";
 import { useLocalGitInfo } from "#/hooks/query/use-local-git-info";
 import { useTaskPolling } from "#/hooks/query/use-task-polling";
@@ -285,6 +286,17 @@ export function GitControlBar({ onSuggestionsClick }: GitControlBarProps) {
                 isConversationReady={isConversationReady}
               />
             </GitControlBarTooltipWrapper>
+
+            {isLocalBackend && conversationId ? (
+              <GitControlBarShipButton
+                conversationId={conversationId}
+                repository={
+                  gitProvider === "github" ? selectedRepository : null
+                }
+                isAgentRunning={conversation?.execution_status === "running"}
+                isConversationReady={isConversationReady}
+              />
+            ) : null}
           </>
         ) : null}
       </div>

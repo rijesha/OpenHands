@@ -5,6 +5,7 @@ import type {
   GithubWorkItemStateFilter,
 } from "#/api/git-provider-items-service";
 import { GithubPage } from "#/components/features/github/github-page";
+import { useGithubRecentRepositoriesStore } from "#/stores/github-recent-repositories-store";
 import { parseGithubRepository } from "#/utils/parse-github-repository";
 
 // The URL is the only owner of the page's selection, so a link (or Back)
@@ -44,6 +45,8 @@ export default function GithubRoute() {
       : "issue";
   const state = parseState(searchParams.get(STATE_PARAM));
   const selectedNumber = parseItemNumber(searchParams.get(ITEM_PARAM));
+  const lastUsed = useGithubRecentRepositoriesStore((s) => s.lastUsed);
+  const setLastUsed = useGithubRecentRepositoriesStore((s) => s.setLastUsed);
 
   const update = React.useCallback(
     (patch: ParamPatch, { replace }: { replace: boolean }) => {
@@ -61,6 +64,20 @@ export default function GithubRoute() {
     },
     [setSearchParams],
   );
+
+  // Remember the repository only when it changes: keying this on `lastUsed`
+  // too would write back a repository the user has just removed.
+  React.useEffect(() => {
+    if (repository) setLastUsed(repository);
+  }, [repository, setLastUsed]);
+
+  // A link names its repository; a bare visit reopens the last one used.
+  const hasRepositoryParam = searchParams.has(REPOSITORY_PARAM);
+  React.useEffect(() => {
+    if (!hasRepositoryParam && lastUsed) {
+      update({ [REPOSITORY_PARAM]: lastUsed }, { replace: true });
+    }
+  }, [hasRepositoryParam, lastUsed, update]);
 
   return (
     <GithubPage

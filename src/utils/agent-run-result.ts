@@ -31,7 +31,15 @@ const EXECUTION_STATUS: Record<string, AgentRunStatus> = {
  * result. A run that failed on a usage limit is told apart from other errors
  * because it can simply be resumed later.
  */
-export function analyzeAgentRun(events: readonly unknown[]): AgentRunSummary {
+export function analyzeAgentRun(
+  events: readonly unknown[],
+  /**
+   * The conversation record's `execution_status`. It wins over the one found
+   * in the events: only the newest page of events is loaded, so a long turn
+   * can push its status event out of the window.
+   */
+  recordStatus?: string | null,
+): AgentRunSummary {
   let executionStatus: string | null = null;
   let finish: string | null = null;
   let lastMessage: string | null = null;
@@ -57,8 +65,9 @@ export function analyzeAgentRun(events: readonly unknown[]): AgentRunSummary {
     }
   }
 
+  const knownStatus = recordStatus ?? executionStatus;
   let status: AgentRunStatus =
-    (executionStatus && EXECUTION_STATUS[executionStatus]) || "unknown";
+    (knownStatus && EXECUTION_STATUS[knownStatus]) || "unknown";
   if (status === "error" && error && RATE_LIMIT.test(error)) {
     status = "rate_limited";
   }
@@ -173,4 +182,49 @@ export function parseReviewComments(result: string): {
     text: `${result.slice(0, found.start)}${result.slice(found.end)}`.trim(),
     comments: found.comments,
   };
+}
+
+/** What the agent prepared for a one-click commit and pull request. */
+export interface ShipPlan {
+  commitMessage: string | null;
+  pullRequest: { title: string; body: string } | null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * Reads the final fenced `json` block of a reply that prepares a commit and
+ * pull request (see `shipPlanBlock`). The last well-formed block wins; a reply
+ * without one gives `null`.
+ */
+export function parseShipPlan(result: string): ShipPlan | null {
+  let plan: ShipPlan | null = null;
+  for (const match of result.matchAll(FENCED_JSON)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(match[1]);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+    const { commit, pull_request: pullRequest } = parsed as Record<
+      string,
+      Record<string, unknown> | undefined
+    >;
+    const commitMessage = nonEmptyString(commit?.message);
+    const title = nonEmptyString(pullRequest?.title);
+    if (commitMessage || title) {
+      plan = {
+        commitMessage,
+        pullRequest: title
+          ? { title, body: nonEmptyString(pullRequest?.body) ?? "" }
+          : null,
+      };
+    }
+  }
+  return plan;
 }

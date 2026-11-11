@@ -5,6 +5,7 @@ import { useActiveBackend } from "#/contexts/active-backend-context";
 import { useNavigation } from "#/context/navigation-context";
 import { useCreateConversation } from "#/hooks/mutation/use-create-conversation";
 import { useUpdateConversation } from "#/hooks/mutation/use-update-conversation";
+import { useProjects } from "#/hooks/query/use-projects";
 import { useVmHarness } from "#/hooks/query/use-vm-harness";
 import { useIsCreatingConversation } from "#/hooks/use-is-creating-conversation";
 import { I18nKey } from "#/i18n/declaration";
@@ -67,6 +68,7 @@ export function useLaunchGithubAgent() {
   const { mutate: renameConversation } = useUpdateConversation();
   const isCreatingConversation = useIsCreatingConversation();
   const { pluginPath: vmHarnessPluginPath } = useVmHarness();
+  const { projects } = useProjects();
   const recordRun = useGithubAgentRunsStore((state) => state.record);
   const [pendingAction, setPendingAction] =
     React.useState<GithubAgentAction | null>(null);
@@ -81,6 +83,17 @@ export function useLaunchGithubAgent() {
       const guiVm = vmHarnessPluginPath ? options.guiVm : undefined;
       const isCloud = backend.kind === "cloud";
       const branch = startBranch(action, repository, item);
+      // A repository already checked out on this machine is used through an
+      // isolated worktree: nothing to clone, and the user's own checkout and
+      // uncommitted work stay untouched.
+      const checkout = isCloud
+        ? undefined
+        : projects.find(
+            (project) =>
+              project.isGit &&
+              project.provider === "github" &&
+              project.repository?.toLowerCase() === repository.toLowerCase(),
+          );
 
       setPendingAction(action);
       createConversation(
@@ -88,12 +101,18 @@ export function useLaunchGithubAgent() {
           query: buildGithubAgentPrompt(action, {
             repository,
             item,
-            needsClone: !isCloud,
+            needsClone: !isCloud && !checkout,
             guiVm,
             instructions: options.instructions,
           }),
           ...(guiVm && vmHarnessPluginPath
             ? { plugins: [buildGuiVmPlugin(vmHarnessPluginPath)] }
+            : {}),
+          ...(checkout
+            ? {
+                workingDir: checkout.workspace.path,
+                workspaceMode: "new_worktree" as const,
+              }
             : {}),
           ...(isCloud
             ? {
@@ -136,6 +155,7 @@ export function useLaunchGithubAgent() {
       backend.kind,
       createConversation,
       navigate,
+      projects,
       recordRun,
       renameConversation,
       t,

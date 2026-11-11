@@ -58,7 +58,7 @@ export interface GithubPageProps {
   kind: GithubWorkItemKind;
   state: GithubWorkItemStateFilter;
   selectedNumber: number | null;
-  onRepositoryChange: (repository: string) => void;
+  onRepositoryChange: (repository: string | null) => void;
   onKindChange: (kind: GithubWorkItemKind) => void;
   onStateChange: (state: GithubWorkItemStateFilter) => void;
   onSelectItem: (number: number | null) => void;

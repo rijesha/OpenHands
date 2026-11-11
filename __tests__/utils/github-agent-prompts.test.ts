@@ -26,6 +26,25 @@ const prompt = (
     guiVm,
   });
 
+describe("one-click commit and pull request", () => {
+  it("asks work on an issue for a commit message and pull request, but not to push", () => {
+    const text = prompt("work_on_issue");
+
+    expect(text).toContain('"pull_request": {"title"');
+    expect(text).toContain("Do not push or open the pull request yourself");
+  });
+
+  it.each<GithubAgentAction>(["address_review_comments", "fix_failing_checks"])(
+    "asks %s only for a commit message, since the pull request exists",
+    (action) => {
+      const text = prompt(action);
+
+      expect(text).toContain('{"commit": {"message"');
+      expect(text).not.toContain('"pull_request": {"title"');
+    },
+  );
+});
+
 describe("buildGithubAgentPrompt", () => {
   it.each<GithubAgentAction>([
     "work_on_issue",

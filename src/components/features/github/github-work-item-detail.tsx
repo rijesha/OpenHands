@@ -1,5 +1,5 @@
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   GithubWorkItemDetail,
@@ -15,6 +15,11 @@ import { useGithubWorkItem } from "#/hooks/query/use-github-work-items";
 import { useVmHarness } from "#/hooks/query/use-vm-harness";
 import { useLaunchGithubAgent } from "#/hooks/use-launch-github-agent";
 import { I18nKey } from "#/i18n/declaration";
+import { useActiveBackend } from "#/contexts/active-backend-context";
+import {
+  githubRunKey,
+  useGithubAgentRunsStore,
+} from "#/stores/github-agent-runs-store";
 import { formatRelativeTime } from "#/utils/format-relative-time";
 import {
   GITHUB_ISSUE_AGENT_ACTIONS,
@@ -223,6 +228,25 @@ function GithubWorkItemMeta({ item }: { item: GithubWorkItemDetail }) {
   );
 }
 
+type DetailTab = "overview" | "runs" | "checks" | "files" | "discussion";
+
+const DETAIL_TAB_LABEL: Record<DetailTab, I18nKey> = {
+  overview: I18nKey.GITHUB$TAB_OVERVIEW,
+  runs: I18nKey.GITHUB$AGENT_RUNS,
+  checks: I18nKey.GITHUB$CHECKS,
+  files: I18nKey.GITHUB$CHANGED_FILES,
+  discussion: I18nKey.GITHUB$DISCUSSION,
+};
+
+const ISSUE_TABS: readonly DetailTab[] = ["overview", "runs", "discussion"];
+const PULL_REQUEST_TABS: readonly DetailTab[] = [
+  "overview",
+  "runs",
+  "checks",
+  "files",
+  "discussion",
+];
+
 interface GithubWorkItemDetailPanelProps {
   repository: string;
   kind: GithubWorkItemKind;
@@ -240,12 +264,27 @@ export function GithubWorkItemDetailPanel({
   onOpenItem,
 }: GithubWorkItemDetailPanelProps) {
   const { t } = useTranslation("openhands");
+  const { backend } = useActiveBackend();
+  const [tab, setTab] = useState<DetailTab>("overview");
+  const runCount = useGithubAgentRunsStore(
+    (state) => state.runs[githubRunKey(backend.id, repository, number)]?.length,
+  );
   const {
     data: item,
     isLoading,
     error,
     refetch,
   } = useGithubWorkItem(repository, kind, number);
+  const tabs = kind === "pull_request" ? PULL_REQUEST_TABS : ISSUE_TABS;
+
+  const moveTab = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const next = tabs[(tabs.indexOf(tab) + step + tabs.length) % tabs.length];
+    setTab(next);
+    document.getElementById(`github-detail-tab-${next}`)?.focus();
+  };
 
   return (
     <div data-testid="github-work-item-detail" className="flex flex-col gap-4">
@@ -299,55 +338,107 @@ export function GithubWorkItemDetailPanel({
             <GithubWorkItemMeta item={item} />
           </header>
 
-          <GithubAgentActions repository={repository} item={item} />
-
-          <GithubPullRequestActions repository={repository} item={item} />
-
-          <GithubAgentRuns repository={repository} item={item} />
-
-          <GithubVmRuns repository={repository} number={item.number} />
-
-          {item.kind === "pull_request" ? (
-            <>
-              <GithubChecks repository={repository} sha={item.headSha} />
-              <GithubPipelines repository={repository} sha={item.headSha} />
-            </>
-          ) : null}
-
-          <GithubLinkedItems
-            repository={repository}
-            number={item.number}
-            body={item.body}
-            onOpenItem={onOpenItem}
-          />
-
           <div
-            data-testid="github-work-item-body"
-            className={cn(
-              "rounded-lg border border-border p-4 text-sm text-contrast",
-              "min-w-0 overflow-x-auto",
-            )}
+            role="tablist"
+            aria-label={t(I18nKey.GITHUB$DETAIL_TABS_LABEL)}
+            className="flex flex-wrap gap-1 border-b border-border"
           >
-            {item.body?.trim() ? (
-              <MarkdownRenderer includeStandard includeHeadings>
-                {item.body}
-              </MarkdownRenderer>
-            ) : (
-              <p className="text-muted italic">
-                {t(I18nKey.GITHUB$NO_DESCRIPTION)}
-              </p>
-            )}
+            {tabs.map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`github-detail-tab-${id}`}
+                data-testid={`github-detail-tab-${id}`}
+                aria-selected={tab === id}
+                aria-controls="github-detail-panel"
+                tabIndex={tab === id ? 0 : -1}
+                onClick={() => setTab(id)}
+                onKeyDown={moveTab}
+                className={cn(
+                  "-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors focus:outline-none focus-visible:text-contrast",
+                  tab === id
+                    ? "border-primary text-contrast"
+                    : "border-transparent text-muted hover:text-contrast",
+                )}
+              >
+                {t(DETAIL_TAB_LABEL[id])}
+                {id === "runs" && runCount ? (
+                  <span className="ml-1.5 rounded-full bg-interactive-selected px-1.5 text-xs tabular-nums">
+                    {runCount}
+                  </span>
+                ) : null}
+              </button>
+            ))}
           </div>
 
-          {item.kind === "pull_request" ? (
-            <GithubChangedFiles repository={repository} number={item.number} />
-          ) : null}
+          <div
+            role="tabpanel"
+            id="github-detail-panel"
+            aria-labelledby={`github-detail-tab-${tab}`}
+            className="flex flex-col gap-4"
+          >
+            {tab === "overview" ? (
+              <>
+                <GithubAgentActions repository={repository} item={item} />
 
-          <GithubDiscussion
-            repository={repository}
-            kind={item.kind}
-            number={item.number}
-          />
+                <GithubLinkedItems
+                  repository={repository}
+                  number={item.number}
+                  body={item.body}
+                  onOpenItem={onOpenItem}
+                />
+
+                <div
+                  data-testid="github-work-item-body"
+                  className={cn(
+                    "rounded-lg border border-border p-4 text-sm text-contrast",
+                    "min-w-0 overflow-x-auto",
+                  )}
+                >
+                  {item.body?.trim() ? (
+                    <MarkdownRenderer includeStandard includeHeadings>
+                      {item.body}
+                    </MarkdownRenderer>
+                  ) : (
+                    <p className="text-muted italic">
+                      {t(I18nKey.GITHUB$NO_DESCRIPTION)}
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : null}
+
+            {tab === "runs" ? (
+              <>
+                <GithubAgentRuns repository={repository} item={item} />
+                <GithubVmRuns repository={repository} number={item.number} />
+              </>
+            ) : null}
+
+            {tab === "checks" && item.kind === "pull_request" ? (
+              <>
+                <GithubPullRequestActions repository={repository} item={item} />
+                <GithubChecks repository={repository} sha={item.headSha} />
+                <GithubPipelines repository={repository} sha={item.headSha} />
+              </>
+            ) : null}
+
+            {tab === "files" && item.kind === "pull_request" ? (
+              <GithubChangedFiles
+                repository={repository}
+                number={item.number}
+              />
+            ) : null}
+
+            {tab === "discussion" ? (
+              <GithubDiscussion
+                repository={repository}
+                kind={item.kind}
+                number={item.number}
+              />
+            ) : null}
+          </div>
         </>
       ) : null}
     </div>

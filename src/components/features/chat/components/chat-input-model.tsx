@@ -19,6 +19,7 @@ import { cn } from "#/utils/utils";
 import { getLockedCloudHost } from "#/api/agent-server-config";
 import { chatInputPillButtonClassName } from "#/utils/form-control-classes";
 import React from "react";
+import { ClaudeCodeControls } from "./claude-code-controls";
 
 const MODEL_LABEL_MAX_CHARS = 10;
 // ACP surfaces show the provider's human label (e.g. "Claude Opus 4.7"),
@@ -132,6 +133,7 @@ export function ChatInputModelMenuContent({
           </div>
         </li>
       ) : null}
+      {model.acpServerKey === "claude-code" ? <ClaudeCodeControls /> : null}
       {showSettingsLink && hasModelRows && <Divider inset={dividerInset} />}
       {showSettingsLink && (
         <li className="text-sm">

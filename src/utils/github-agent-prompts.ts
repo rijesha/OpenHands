@@ -85,6 +85,21 @@ function vmOrigin(
 export const REVIEW_COMMENTS_BLOCK =
   'End your reply with one fenced `json` block listing the findings that belong on a line of the new version of a file, as [{"path": "src/a.ts", "line": 12, "body": "what is wrong and how to fix it"}]. Leave the block out if there are none.';
 
+/**
+ * Lets the user commit, push and open a pull request with one click, without a
+ * further model turn: the page reads this block from the reply.
+ */
+export function shipPlanBlock(includePullRequest: boolean): string {
+  const example = includePullRequest
+    ? '{"commit": {"message": "<commit message>"}, "pull_request": {"title": "<title>", "body": "<description that references the issue>"}}'
+    : '{"commit": {"message": "<commit message>"}}';
+  const what = includePullRequest ? "commit and pull request" : "commit";
+  const forbidden = includePullRequest
+    ? "push or open the pull request"
+    : "push";
+  return `End your reply with one fenced \`json\` block that prepares my one-click ${what}: ${example}. Do not ${forbidden} yourself.`;
+}
+
 function numbered(steps: string[]): string {
   return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
 }
@@ -114,6 +129,7 @@ function buildWorkOnIssuePrompt({
             ),
           ]
         : []),
+      shipPlanBlock(true),
     ]),
     "",
     "Do not push the branch or open a pull request until I ask.",
@@ -206,6 +222,7 @@ function buildAddressReviewCommentsPrompt({
           ]
         : []),
       "Commit the changes on the branch. Summarize, per comment, what you changed or why you did not.",
+      shipPlanBlock(false),
     ]),
     "",
     "Do not push or reply on the pull request until I ask.",
@@ -232,6 +249,7 @@ function buildFixFailingChecksPrompt({
         ? [buildGuiVmVerification(guiVm, "the fix", vmOrigin(repository, item))]
         : []),
       "Commit the fix on the branch and summarize what failed, why, and what you changed.",
+      shipPlanBlock(false),
     ]),
     "",
     "Do not push until I ask.",

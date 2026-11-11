@@ -997,6 +997,22 @@ export class GitProviderItemsService {
     return { url: result.html_url };
   }
 
+  /** Opens a pull request from `head` (a branch of this repository) into `base`. */
+  static async createGithubPullRequest(
+    repository: string,
+    pullRequest: { title: string; body: string; head: string; base: string },
+  ): Promise<{ url: string; number: number }> {
+    const parts = splitGithubRepository(repository);
+    if (!parts) throw new GitProviderApiError("GitHub", 404);
+    const token = await GitProviderItemsService.writeToken();
+    const result = await fetchGithubJson<{ html_url: string; number: number }>(
+      `/repos/${parts[0]}/${parts[1]}/pulls`,
+      token,
+      { method: "POST", body: pullRequest },
+    );
+    return { url: result.html_url, number: result.number };
+  }
+
   /** Merges a pull request. `sha` makes GitHub refuse the merge if the branch moved after it was shown. */
   static async mergeGithubPullRequest(
     repository: string,
